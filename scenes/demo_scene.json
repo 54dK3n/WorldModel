@@ -1,0 +1,67 @@
+{
+  "description": "覆盖四类验收场景：正常跟踪 / 遮挡不删除 / 视野外慢衰减 / 视野内漏检快衰减 / 球进桶",
+  "frames": [
+    {
+      "t": 0.0, "frame_id": "f0000",
+      "robot_pose": {"x": 0.0, "z": 0.0, "yaw_rad": 0.0, "pose_uncertainty_cm": 0.5},
+      "detections": [
+        {"class_name": "sports ball", "x": 0.10, "z": 1.20, "radius_cm": 3.3, "confidence": 0.95, "bbox": [300, 220, 340, 260], "source": "mock_detector"},
+        {"class_name": "basket", "x": -0.60, "z": 1.60, "radius_cm": 15.0, "confidence": 0.90, "bbox": [120, 200, 220, 300], "source": "mock_detector"}
+      ]
+    },
+    {
+      "t": 0.5, "frame_id": "f0001",
+      "robot_pose": {"x": 0.0, "z": 0.0, "yaw_rad": 0.0, "pose_uncertainty_cm": 0.6},
+      "detections": [
+        {"class_name": "sports ball", "x": 0.13, "z": 1.18, "radius_cm": 3.3, "confidence": 0.94, "bbox": [302, 222, 342, 262], "source": "mock_detector"},
+        {"class_name": "basket", "x": -0.60, "z": 1.60, "radius_cm": 15.0, "confidence": 0.91, "bbox": [120, 200, 220, 300], "source": "mock_detector"}
+      ]
+    },
+    {
+      "t": 1.0, "frame_id": "f0002",
+      "robot_pose": {"x": 0.0, "z": 0.0, "yaw_rad": 0.0, "pose_uncertainty_cm": 0.6},
+      "detections": [
+        {"class_name": "sports ball", "x": 0.16, "z": 1.15, "radius_cm": 3.3, "confidence": 0.96, "bbox": [305, 224, 345, 264], "source": "mock_detector"},
+        {"class_name": "basket", "x": -0.60, "z": 1.60, "radius_cm": 15.0, "confidence": 0.92, "bbox": [120, 200, 220, 300], "source": "mock_detector"}
+      ]
+    },
+    {
+      "t": 1.5, "frame_id": "f0003",
+      "_note": "机械臂挡住球：视野内漏检，confidence 应快速下降，但对象不能被删除",
+      "robot_pose": {"x": 0.0, "z": 0.0, "yaw_rad": 0.0, "pose_uncertainty_cm": 0.6},
+      "detections": [
+        {"class_name": "basket", "x": -0.60, "z": 1.60, "radius_cm": 15.0, "confidence": 0.92, "bbox": [120, 200, 220, 300], "source": "mock_detector"}
+      ]
+    },
+    {
+      "t": 2.5, "frame_id": "f0004",
+      "_note": "机器人转身 90 度：球落到视野外，此后应改走慢衰减",
+      "robot_pose": {"x": 0.0, "z": 0.0, "yaw_rad": 1.7, "pose_uncertainty_cm": 0.8},
+      "detections": []
+    },
+    {
+      "t": 6.0, "frame_id": "f0005",
+      "_note": "视野外停留 3.5s，球的 confidence 应几乎不掉",
+      "robot_pose": {"x": 0.0, "z": 0.0, "yaw_rad": 1.7, "pose_uncertainty_cm": 1.0},
+      "detections": []
+    },
+    {
+      "t": 7.0, "frame_id": "f0006",
+      "_note": "转回来重新看到球，confidence 恢复，obj_id 必须保持不变",
+      "robot_pose": {"x": 0.0, "z": 0.0, "yaw_rad": 0.0, "pose_uncertainty_cm": 1.0},
+      "detections": [
+        {"class_name": "sports ball", "x": 0.18, "z": 1.14, "radius_cm": 3.3, "confidence": 0.93, "bbox": [307, 226, 347, 266], "source": "mock_detector"},
+        {"class_name": "basket", "x": -0.60, "z": 1.60, "radius_cm": 15.0, "confidence": 0.92, "bbox": [120, 200, 220, 300], "source": "mock_detector"}
+      ]
+    },
+    {
+      "t": 9.0, "frame_id": "f0007",
+      "_note": "球被放进桶：坐标重合，Judge 应据此判定 success",
+      "robot_pose": {"x": 0.0, "z": 0.0, "yaw_rad": 0.0, "pose_uncertainty_cm": 1.0},
+      "detections": [
+        {"class_name": "sports ball", "x": -0.58, "z": 1.61, "radius_cm": 3.3, "confidence": 0.88, "bbox": [150, 230, 180, 260], "source": "mock_detector"},
+        {"class_name": "basket", "x": -0.60, "z": 1.60, "radius_cm": 15.0, "confidence": 0.93, "bbox": [120, 200, 220, 300], "source": "mock_detector"}
+      ]
+    }
+  ]
+}
