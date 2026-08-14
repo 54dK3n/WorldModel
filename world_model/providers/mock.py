@@ -18,6 +18,9 @@ class MockProvider(PerceptionProvider):
         with open(scene_path, "r", encoding="utf-8") as f:
             self.scene = json.load(f)
         self.frames = self.scene["frames"]
+        # 场景相对时刻 0.0 对应的 Unix 时间。回放数据的 t 是相对秒，
+        # 不声明原点就没法导出正确的 ISO 时间戳。
+        self.time_origin: float = float(self.scene.get("time_origin", 0.0))
 
     def stream(self) -> Iterator[Tuple[float, RobotPose, List[Detection]]]:
         for frame in self.frames:

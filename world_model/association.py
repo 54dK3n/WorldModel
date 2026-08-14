@@ -27,15 +27,27 @@ INF = float("inf")
 
 @dataclass
 class AssociationConfig:
-    # 门控：超过此距离一律不配
-    # 已知局限（run_demo.py 复现）：固定门控在长帧间隔下会误判。
-    # demo 中球在 2s 内移动 0.75m > 0.5m 门控，被新建成 ball_003 而非关联到 ball_001。
-    # 正确做法是门控随 dt 缩放：gate = base + v_max * dt，或引入恒速运动预测。
-    # TODO(P1): 帧率稳定后改为 dt 自适应门控 + 简单运动模型
-    gate_distance_m: float = 0.5
+    """门控随 dt 自适应：gate = base + v_max * dt（有上限）。
+
+    历史：这里原本是固定 0.5m 门控。固定门控在长帧间隔下会断轨 ——
+    demo 里球在 2s 内移动 0.75m 超过门控，被新建成 ball_003 而不是关联到
+    ball_001。后果不只是"id 不好看"：断轨产生的幽灵轨迹会一路传导到判定层，
+    让 Judge 在两条同名轨迹之间按置信度二选一，判定结论随检测分数翻转。
+    详见 2026-08-11 判定可靠性复核用例 A / B。
+    """
+
+    gate_distance_m: float = 0.5        # 基础门控（dt=0 时）
+    max_speed_mps: float = 0.5          # 目标运动速度上限，用来按 dt 放大门控
+    max_gate_distance_m: float = 2.0    # 门控上限，避免长时间不更新后门控大到乱配
     class_mismatch_penalty: float = 1.0
     allow_cross_class: bool = False   # False = 类别不一致直接门控掉
     appearance_weight: float = 0.0    # 预留 ReID 权重，本期为 0
+
+
+def gate_for(track: TrackedObject, now: Optional[float], cfg: AssociationConfig) -> float:
+    """该轨迹这一帧的门控距离。距上次真实观测越久，允许的位移越大。"""
+    dt = max(0.0, now - track.last_seen) if now is not None else 0.0
+    return min(cfg.gate_distance_m + cfg.max_speed_mps * dt, cfg.max_gate_distance_m)
 
 
 @dataclass
@@ -55,16 +67,21 @@ def build_cost_matrix(
     aliases: AliasTable,
     cfg: AssociationConfig,
     appearance_fn: Optional[Callable[[TrackedObject, Detection], float]] = None,
+    now: Optional[float] = None,
 ) -> List[List[float]]:
-    """N×M 代价矩阵。inf 表示被门控掉、不可配。"""
+    """N×M 代价矩阵。inf 表示被门控掉、不可配。
+
+    门控按每条轨迹各自的 dt 计算 —— 刚看到的轨迹门控紧，很久没更新的放宽。
+    """
     matrix: List[List[float]] = []
     for t in tracks:
         row: List[float] = []
+        gate = gate_for(t, now, cfg)
         for d in detections:
             dist = euclidean(t.x, t.z, d.x, d.z)
 
-            # 门控 1：距离
-            if dist > cfg.gate_distance_m:
+            # 门控 1：距离（随 dt 放宽）
+            if dist > gate:
                 row.append(INF)
                 continue
 
@@ -74,7 +91,7 @@ def build_cost_matrix(
                 row.append(INF)
                 continue
 
-            cost = dist / max(cfg.gate_distance_m, 1e-6)
+            cost = dist / max(gate, 1e-6)
             if not same:
                 cost += cfg.class_mismatch_penalty
             if appearance_fn is not None and cfg.appearance_weight > 0:
@@ -122,10 +139,11 @@ def associate(
     detections: Sequence[Detection],
     aliases: AliasTable,
     cfg: AssociationConfig | None = None,
+    now: Optional[float] = None,
 ) -> AssociationResult:
     cfg = cfg or AssociationConfig()
     if not tracks:
         return AssociationResult([], [], list(range(len(detections))))
     if not detections:
         return AssociationResult([], list(range(len(tracks))), [])
-    return greedy_assign(build_cost_matrix(tracks, detections, aliases, cfg))
+    return greedy_assign(build_cost_matrix(tracks, detections, aliases, cfg, now=now))

@@ -6,17 +6,19 @@ from __future__ import annotations
 
 import json
 
-from judge.providers import JudgeRequest, WorldModelDiffProvider
-from world_model import WorldModel, to_scene_observations
+from judge.providers import JudgeContext, JudgeRequest, WorldModelDiffProvider
+from world_model import WorldModel
 from world_model.decay import is_in_fov
 from world_model.providers import MockProvider
 
 
 def main() -> None:
-    wm = WorldModel()
     provider = MockProvider("scenes/demo_scene.json")
+    # 场景相对时刻 0.0 对应的 Unix 时间。不给的话导出的 timestamp 会落在 1970 年。
+    wm = WorldModel(time_origin=provider.time_origin)
 
     before_snapshot = None
+    target_id = None
     last_ts = 0.0
 
     print("=" * 74)
@@ -38,18 +40,22 @@ def main() -> None:
 
         if abs(ts - 7.0) < 1e-6:          # 放球动作之前
             before_snapshot = wm.snapshot()
+            ball = wm.get_object("ball")
+            target_id = ball.obj_id if ball else None   # 锁定判定主语
 
     print("\n" + "=" * 74)
     print("对外契约 scene_observations:")
-    print(json.dumps(to_scene_observations(wm.get_scene()), ensure_ascii=False, indent=2))
+    print(json.dumps(wm.to_contract(), ensure_ascii=False, indent=2))
 
     print("\n" + "=" * 74)
     print("Judge 判定（evidence 不再是空字典）:")
     resp = WorldModelDiffProvider().judge(
         JudgeRequest(task="put_ball_in_basket", target="ball",
-                     container="basket", now=last_ts),
+                     container="basket", now=last_ts, gripper_closed=False),
         before=before_snapshot or [],
         after=wm.snapshot(),
+        # 判定主语用 id 锁定；契约里没有这个字段，走 JudgeContext 旁路传。
+        ctx=JudgeContext(target_id=target_id),
     )
     print(f"success = {resp.success}")
     print(f"detail  = {resp.detail}")
