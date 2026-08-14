@@ -1,0 +1,339 @@
+# python tools/false_verdict_probe.py（修复后）— 2026-08-11 17:47:31 AEST
+
+判定可靠性探针 — wm_kit
+每个用例声明物理事实上应有的判定，与系统实际输出比对
+
+
+==============================================================================
+[A] 身份连续：大位移后判定用的还是不是同一个对象
+==============================================================================
+  before:
+    ball_001     name=ball    conf=0.950 state=confirmed pos=(+0.143,+1.165) age=+0.0s
+    basket_002   name=basket  conf=0.920 state=confirmed pos=(-0.600,+1.600) age=+0.0s
+  after :
+    ball_001     name=ball    conf=0.901 state=confirmed pos=(-0.561,+1.599) age=+0.0s
+    basket_002   name=basket  conf=0.927 state=confirmed pos=(-0.600,+1.600) age=+0.0s
+  success  = True
+  detail   = ball -> basket 判定成立（距离 3.85cm / 阈值 11.7cm）
+  relation = {'type': 'inside', 'distance_cm': 3.85, 'threshold_cm': 11.7, 'satisfied': True, 'before_distance_cm': 86.1, 'before_satisfied': False}
+  target   = before:ball_001 after:ball_001
+  reasons  = []
+  caveats  = ['no_height_evidence', 'heuristic_confidence']
+
+  after 里的 ball 轨迹：{'ball_001'}
+  门控随 dt 放宽（0.5 + 0.5*2.0 = 1.5m > 0.89m 位移）后不再断轨，
+  before/after 是同一个 obj_id，判定主语明确。
+
+>>> [A] PASS — 应判 True，实判 True —— 球确实进桶，且全程同一条轨迹
+
+==============================================================================
+[B] 判定稳定性：物理事实不变，只改检测置信度，判定不应翻转
+==============================================================================
+
+------------------------------------------------------------------------------
+  新检测 conf=0.88（球都在桶里，物理事实不变）
+  ball 轨迹数=1 | success=True
+  detail=ball -> basket 判定成立（距离 3.85cm / 阈值 11.7cm）
+
+------------------------------------------------------------------------------
+  新检测 conf=0.55（球都在桶里，物理事实不变）
+  ball 轨迹数=1 | success=True
+  detail=ball -> basket 判定成立（距离 3.85cm / 阈值 11.7cm）
+
+------------------------------------------------------------------------------
+  新检测 conf=0.35（球都在桶里，物理事实不变）
+  ball 轨迹数=1 | success=True
+  detail=ball -> basket 判定成立（距离 3.85cm / 阈值 11.7cm）
+
+  修复前：conf 0.88 -> True，0.55 -> False（幽灵轨迹反超，判定翻转）。
+  现在三档同判 —— 判定跟着球走，不跟着检测分数走。
+  注：conf=0.35 时融合后的置信度若跌破 min_confidence 会判失败，
+      那是**有原因的拒绝**（证据太弱），不是随机翻转。
+
+>>> [B] PASS — 应判 True，实判 True —— 0.88/0.55 两档判定一致：[True, True, True]
+
+==============================================================================
+[C] 干扰物：桶里本来就有另一个球，被抓的那个球一步没动
+==============================================================================
+  after:
+    ball_001     name=ball    conf=0.850 state=confirmed pos=(+0.300,+1.000) age=+0.0s
+    ball_002     name=ball    conf=0.930 state=confirmed pos=(-0.600,+1.600) age=+0.0s
+    basket_003   name=basket  conf=0.920 state=confirmed pos=(-0.600,+1.600) age=+0.0s
+
+------------------------------------------------------------------------------
+  a) 调用方锁定了目标 id（target_id=ball_001）:
+  success  = False
+  detail   = ball -> basket 判定不成立（距离 108.17cm / 阈值 11.7cm）：几何关系不成立
+  relation = {'type': 'inside', 'distance_cm': 108.17, 'threshold_cm': 11.7, 'satisfied': False, 'before_distance_cm': 108.17, 'before_satisfied': False}
+  target   = before:ball_001 after:ball_001
+  reasons  = ['geometry_not_satisfied']
+  caveats  = ['no_height_evidence', 'heuristic_confidence']
+
+------------------------------------------------------------------------------
+  b) 调用方只给名字 'ball'，场景里有两个:
+  success  = False
+  detail   = ball -> basket 判定不成立（距离 0.0cm / 阈值 11.7cm）：场景中存在多个名为 ball 的对象，无法确定判定主语（请传 target_id）；动作前该关系就已成立，本次动作未造成状态变化
+  relation = {'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 11.7, 'satisfied': True, 'before_distance_cm': 0.0, 'before_satisfied': True}
+  target   = before:ball_002 after:ball_002
+  reasons  = ['ambiguous_target', 'no_state_change']
+  caveats  = ['no_height_evidence', 'heuristic_confidence']
+
+  a) 主语明确 -> 按目标球判，它没动 -> 判失败（正确）
+  b) 主语有歧义 -> 判定层不猜，报 ambiguous_target 并判失败（正确的保守）
+
+>>> [C] PASS — 应判 False，实判 False —— 目标球一步没动，两种调用方式都不报成功
+
+==============================================================================
+[D] 空动作：动作前后完全相同的快照
+==============================================================================
+  success  = False
+  detail   = ball -> basket 判定不成立（距离 0.0cm / 阈值 11.7cm）：动作前该关系就已成立，本次动作未造成状态变化
+  relation = {'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 11.7, 'satisfied': True, 'before_distance_cm': 0.0, 'before_satisfied': True}
+  target   = before:ball_900 after:ball_900
+  reasons  = ['no_state_change']
+  caveats  = ['no_height_evidence', 'heuristic_confidence']
+
+  球在动作前就在桶里，本次动作什么也没发生。
+  relation.satisfied 仍为 True（几何确实成立），但 before_satisfied 也是 True，
+  no_state_change -> 判定不成立。『状态已满足』不等于『这次动作成功』。
+
+>>> [D] PASS — 应判 False，实判 False —— 空动作不再被判成功
+
+==============================================================================
+[E] 时钟：now 早于观测时刻（漏传 now / 时钟源不一致）
+==============================================================================
+
+------------------------------------------------------------------------------
+  a) 正确传 now=100.5（证据新鲜）:
+  success  = True
+  detail   = ball -> basket 判定成立（距离 0.0cm / 阈值 11.7cm）
+  relation = {'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 11.7, 'satisfied': True, 'before_distance_cm': 108.17, 'before_satisfied': False}
+  target   = before:ball_900 after:ball_900
+  reasons  = []
+  caveats  = ['no_height_evidence', 'heuristic_confidence']
+
+------------------------------------------------------------------------------
+  b) 正确传 now=130.0（证据已 30 秒未刷新）:
+  success  = False
+  detail   = ball -> basket 判定不成立（距离 0.0cm / 阈值 11.7cm）：证据过旧，视觉确认不可靠
+  relation = {'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 11.7, 'satisfied': True, 'before_distance_cm': 108.17, 'before_satisfied': False}
+  target   = before:ball_900 after:ball_900
+  reasons  = ['stale_evidence']
+  caveats  = ['no_height_evidence', 'heuristic_confidence']
+
+------------------------------------------------------------------------------
+  c) 调用方漏传 now（JudgeRequest.now 默认 0.0）:
+  success  = False
+  detail   = ball -> basket 判定不成立（距离 0.0cm / 阈值 11.7cm）：now 早于观测时刻，调用方时钟与观测时钟不一致，判定作废
+  relation = {'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 11.7, 'satisfied': True, 'before_distance_cm': 108.17, 'before_satisfied': False}
+  target   = before:ball_900 after:ball_900
+  reasons  = ['clock_skew']
+  caveats  = ['no_height_evidence', 'heuristic_confidence']
+
+  age() 不再把负数夹成 0，c) 被 clock_skew 拦下。
+  修复前 c) 的 staleness 恒为 0.0，30 秒前的快照被当作实时视觉确认。
+
+>>> [E] PASS — 应判 True，实判 True —— 新鲜->成立；陈旧->stale_evidence；时钟不一致->clock_skew
+
+==============================================================================
+[F] 抓取双条件：夹爪反馈 + 视觉确认
+==============================================================================
+
+------------------------------------------------------------------------------
+  a) 夹爪空抓，球在 3 米外地上还能看见:
+  visual_confirmed=False reach=272.95cm (limit 25.0cm) satisfied=False
+  reasons=['out_of_reach']
+
+------------------------------------------------------------------------------
+  b) 真抓住了，球被夹爪自遮挡 1.2s:
+  visual_confirmed=True reach=1.41cm staleness=1.2s satisfied=True
+  reasons=[]
+
+------------------------------------------------------------------------------
+  c) 没有夹爪位姿可用（外壳没提供）:
+  satisfied=False reasons=['no_gripper_pose']
+
+  a) 视觉那条现在要求目标在夹爪够得着的地方 -> out_of_reach，不再空抓报成功
+  b) 抓取姿态下自遮挡给 1.5s 宽限 -> 不再稳定误杀真成功
+  c) 缺夹爪位姿就明说缺，不假装确认了
+
+>>> [F] PASS — 应判 False，实判 False —— 空抓不再判成功
+
+>>> [F2] PASS — 应判 True，实判 True —— 自遮挡 1.2s 的真抓取判成功
+
+>>> [F3] PASS — 应判 False，实判 False —— 缺夹爪位姿时保守判失败并给出原因
+
+==============================================================================
+[G] 单帧误检：桶里冒出一帧高分反光，只出现这一帧
+==============================================================================
+  after:
+    ball_001     name=ball    conf=0.850 state=confirmed pos=(+0.300,+1.000) age=+0.0s
+    basket_002   name=basket  conf=0.920 state=confirmed pos=(-0.600,+1.600) age=+0.0s
+    ball_003     name=ball    conf=0.970 state=tentative pos=(-0.610,+1.590) age=+0.0s
+  success  = False
+  detail   = ball -> basket 判定不成立（距离 108.17cm / 阈值 11.7cm）：几何关系不成立
+  relation = {'type': 'inside', 'distance_cm': 108.17, 'threshold_cm': 11.7, 'satisfied': False, 'before_distance_cm': 108.17, 'before_satisfied': False}
+  target   = before:ball_001 after:ball_001
+  reasons  = ['geometry_not_satisfied']
+  caveats  = ['no_height_evidence', 'heuristic_confidence']
+
+  判定主语由 before 锁定 -> 看的是桌上那个球，它没动 -> 失败。
+  即使调用方不给 id，误检轨迹是 TENTATIVE（hit_count=1 < confirm_hits=3），
+  也会被 unconfirmed_track 挡住 —— 状态机现在真的参与判定了。
+  不给 id 时：success=False reasons=['ambiguous_target', 'geometry_not_satisfied']
+
+>>> [G] PASS — 应判 False，实判 False —— 单帧误检（['ball_003']）不再构成视觉确认
+
+==============================================================================
+[H] 几何：2D 投影判据的能力边界
+==============================================================================
+
+------------------------------------------------------------------------------
+  球被夹爪举在桶正上方 30cm，夹爪仍闭合
+  success=False relation={'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 11.7, 'satisfied': True, 'before_distance_cm': 111.8, 'before_satisfied': False}
+  reasons=['still_grasped']
+
+------------------------------------------------------------------------------
+  球被举在桶上方，但外壳没报夹爪状态
+  success=True relation={'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 11.7, 'satisfied': True, 'before_distance_cm': 111.8, 'before_satisfied': False}
+  reasons=[]
+
+------------------------------------------------------------------------------
+  球架在桶沿上，球心距桶心 14.9cm
+  success=False relation={'type': 'inside', 'distance_cm': 14.9, 'threshold_cm': 11.7, 'satisfied': False, 'before_distance_cm': 111.8, 'before_satisfied': False}
+  reasons=['geometry_not_satisfied']
+
+  阈值现在扣掉目标半径（15 - 3.3 = 11.7cm），判据是『球整体落在桶投影内』，
+  架在桶沿的球（14.9cm）几何上就不再成立 —— 不靠位姿不确定度护栏侥幸拦截。
+  『举在正上方』：夹爪闭合时判 still_grasped 拦下；外壳不报夹爪状态时，
+  俯视投影确实分不出上方与里面 —— 这是契约缺 y 轴的硬边界，
+  每条 containment 判定都带 no_height_evidence 提示，等契约决策。
+
+>>> [H] PASS — 应判 False，实判 False —— 夹爪闭合时不再把『举在桶上方』判成放入成功
+
+>>> [H2] PASS — 应判 False，实判 False —— 架在桶沿的球几何上不成立
+
+>>> [H3] KNOWN — 应判 False，实判 True —— 缺夹爪状态时仍无法区分上方/里面
+
+==============================================================================
+[I] 证据质量下限：几乎要 LOST 的对象能不能构成视觉确认
+==============================================================================
+  success  = False
+  detail   = ball -> basket 判定不成立（距离 0.0cm / 阈值 11.7cm）：证据置信度低于下限，不构成视觉确认；轨迹尚未 CONFIRMED（可能是单帧误检），不作为判定证据
+  relation = {'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 11.7, 'satisfied': True, 'before_distance_cm': 108.17, 'before_satisfied': False}
+  target   = before:ball_900 after:ball_900
+  reasons  = ['low_confidence', 'unconfirmed_track']
+  caveats  = ['no_height_evidence', 'heuristic_confidence']
+
+  conf=0.16（lost 阈值 0.15），state=STALE。
+  两条判定路径现在共用 check_quality：低于 min_confidence 或未 CONFIRMED 一律不认。
+
+>>> [I] PASS — 应判 False，实判 False —— STALE + conf=0.16 的残留信念不再充当视觉确认
+
+==============================================================================
+[J] 响应自洽：success 与 evidence 不应给出两个结论
+==============================================================================
+  success  = False
+  detail   = ball -> basket 判定不成立（距离 0.0cm / 阈值 11.7cm）：证据过旧，视觉确认不可靠
+  relation = {'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 11.7, 'satisfied': True, 'before_distance_cm': 108.17, 'before_satisfied': False}
+  target   = before:ball_900 after:ball_900
+  reasons  = ['stale_evidence']
+  caveats  = ['no_height_evidence', 'heuristic_confidence']
+
+  几何 relation.satisfied = True（只表示距离成立）
+  判定 verdict.success     = False（唯一结论）
+  JudgeResponse.success    = False
+  两者语义现在分开了：几何成立不等于判定成立，失败原因写在 reasons 与 detail 里。
+
+>>> [J] PASS — 应判 True，实判 True —— success 只有一个来源，几何字段不再被误读成结论，detail 解释失败原因
+
+==============================================================================
+[K] provider 注册表：未实现路线不应把异常抛穿冻结的 HTTP 契约
+==============================================================================
+  reward_classifier.judge() -> success=False, detail=provider reward_classifier 尚未实现：等数据源与 checkpoint 确定
+  evidence.reasons = ['provider_not_implemented']
+  get_provider('world_model_diff', checkpoint_path=...) -> TypeError: provider world_model_diff 不接受参数 ['checkpoint_path']，它只认 ['policy']
+
+>>> [K] PASS — 应判 True，实判 True —— 未实现 provider 返回 JudgeResponse；错配参数报清楚的 TypeError
+
+==============================================================================
+[L] 对照组：目标/容器缺失、未知任务类型
+==============================================================================
+  success  = False
+  detail   = ball -> basket 判定不成立：目标 ball 在动作后快照中不存在
+  relation = None
+  target   = before:None after:None
+  reasons  = ['missing_target']
+  caveats  = ['no_height_evidence', 'heuristic_confidence']
+
+  未支持任务类型 -> success=False, detail=未支持的任务类型: wipe_table
+
+>>> [L] PASS — 应判 False，实判 False —— 缺观测与未知任务类型都保守判失败
+
+==============================================================================
+[M] 对外契约导出：时间戳纪元 + 同名多实例
+==============================================================================
+[
+  {
+    "name": "ball",
+    "aliases": [
+      "sports ball",
+      "tennis ball",
+      "球",
+      "网球",
+      "小球"
+    ],
+    "x": -0.5615,
+    "z": 1.5986,
+    "radius_cm": 3.3,
+    "source": "probe",
+    "timestamp": "2026-08-11T03:00:03Z",
+    "confidence": 0.901
+  },
+  {
+    "name": "basket",
+    "aliases": [
+      "basket",
+      "bucket",
+      "篮子",
+      "桶",
+      "框"
+    ],
+    "x": -0.6,
+    "z": 1.6,
+    "radius_cm": 15.0,
+    "source": "probe",
+    "timestamp": "2026-08-11T03:00:03Z",
+    "confidence": 0.927
+  }
+]
+
+  name='ball' 的条目数 = 1（修复前是 2：断轨产生的幽灵 + 新轨迹）
+  timestamp = 2026-08-11T03:00:03Z（修复前是 1970-01-01T00:00:0XZ）
+  仍未解决：契约本身没有 id/state 字段，真实场景里同名多实例（多个球）
+  下游依然无法区分。加字段要契约 owner 签字，已记进待确认清单。
+
+>>> [M] PASS — 应判 True，实判 True —— 断轨消失、时间戳落在真实时间；契约加 id 字段仍待对齐
+
+==============================================================================
+汇总
+==============================================================================
+  [A ] PASS   球确实进桶，且全程同一条轨迹
+  [B ] PASS   0.88/0.55 两档判定一致：[True, True, True]
+  [C ] PASS   目标球一步没动，两种调用方式都不报成功
+  [D ] PASS   空动作不再被判成功
+  [E ] PASS   新鲜->成立；陈旧->stale_evidence；时钟不一致->clock_skew
+  [F ] PASS   空抓不再判成功
+  [F2] PASS   自遮挡 1.2s 的真抓取判成功
+  [F3] PASS   缺夹爪位姿时保守判失败并给出原因
+  [G ] PASS   单帧误检（['ball_003']）不再构成视觉确认
+  [H ] PASS   夹爪闭合时不再把『举在桶上方』判成放入成功
+  [H2] PASS   架在桶沿的球几何上不成立
+  [H3] KNOWN  缺夹爪状态时仍无法区分上方/里面
+  [I ] PASS   STALE + conf=0.16 的残留信念不再充当视觉确认
+  [J ] PASS   success 只有一个来源，几何字段不再被误读成结论，detail 解释失败原因
+  [K ] PASS   未实现 provider 返回 JudgeResponse；错配参数报清楚的 TypeError
+  [L ] PASS   缺观测与未知任务类型都保守判失败
+  [M ] PASS   断轨消失、时间戳落在真实时间；契约加 id 字段仍待对齐
+
+  PASS 16 / FAIL 0 / KNOWN(能力边界) 1

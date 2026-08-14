@@ -1,0 +1,383 @@
+# python tools/false_verdict_probe.py — 2026-08-11 17:17:06 AEST
+# python Python 3.9.6
+
+判定可靠性探针 — wm_kit
+目标：找出 Judge 会给出虚假判定（false positive / false negative）的路径
+
+
+==============================================================================
+[A] 身份漂移：判定用的 target.after 和 target.before 不是同一个对象
+==============================================================================
+  动作前：
+  before:
+    ball_001     name=ball    conf=0.950 state=confirmed pos=(+0.143,+1.165) age=0.0s
+    basket_002   name=basket  conf=0.920 state=confirmed pos=(-0.600,+1.600) age=0.0s
+  after:
+    ball_001     name=ball    conf=0.377 state=stale     pos=(+0.143,+1.165) age=2.0s
+    basket_002   name=basket  conf=0.927 state=confirmed pos=(-0.600,+1.600) age=0.0s
+    ball_003     name=ball    conf=0.880 state=tentative pos=(-0.580,+1.610) age=0.0s
+  success = True
+  detail  = ball 距 basket 2.24cm，阈值 15.0cm
+  relation      = {'type': 'inside', 'distance_cm': 2.24, 'threshold_cm': 15.0, 'satisfied': True}
+  target.before = ball_001
+  target.after  = ball_003
+  staleness_s   = 0.0
+  warnings      = []
+
+  物理事实：球确实进桶了 -> 应 success=True
+  系统输出：success=True，但 before/after 是两个不同 obj_id，
+            老轨迹 ball_001 仍以 STALE 留在快照里，判定靠 _find 取 max(confidence) 抽中了新轨迹。
+
+>>> 结论 [A] FRAGILE —— 结论对，但对的原因是置信度竞赛而非物理；无任何 warning 提示身份已切换
+
+==============================================================================
+[B] 同一物理事实，只把新检测置信度调低 -> 判定翻转
+==============================================================================
+
+------------------------------------------------------------------------------
+  新检测 confidence = 0.88（球都在桶里，物理事实不变）
+  after:
+    ball_001     name=ball    conf=0.598 state=confirmed pos=(+0.143,+1.165) age=1.0s
+    basket_002   name=basket  conf=0.927 state=confirmed pos=(-0.600,+1.600) age=0.0s
+    ball_003     name=ball    conf=0.880 state=tentative pos=(-0.580,+1.610) age=0.0s
+  _find 选中 = ball_003（取 max(confidence)）
+  success = True | detail = ball 距 basket 2.24cm，阈值 15.0cm
+
+------------------------------------------------------------------------------
+  新检测 confidence = 0.55（球都在桶里，物理事实不变）
+  after:
+    ball_001     name=ball    conf=0.598 state=confirmed pos=(+0.143,+1.165) age=1.0s
+    basket_002   name=basket  conf=0.927 state=confirmed pos=(-0.600,+1.600) age=0.0s
+    ball_003     name=ball    conf=0.550 state=tentative pos=(-0.580,+1.610) age=0.0s
+  _find 选中 = ball_001（取 max(confidence)）
+  success = False | detail = ball 距 basket 86.1cm，阈值 15.0cm
+
+  两次物理事实完全相同（球在桶里），只是桶里的球被桶壁挡住一部分，
+  检测分数从 0.88 掉到 0.55，低于幽灵轨迹 ball_001 衰减后的 0.598；
+  _find 改抽中留在原位的 ball_001，判定随之翻转。
+
+>>> 结论 [B] FALSE NEGATIVE —— 球已进桶却判失败：判定结果由两条轨迹的置信度大小决定（0.88->ball_003 success=True，0.55->ball_001 success=False）
+
+==============================================================================
+[C] 干扰物假阳性：桶里本来就有另一个球，被抓的那个球一步没动
+==============================================================================
+  before:
+    ball_001     name=ball    conf=0.850 state=confirmed pos=(+0.300,+1.000) age=0.0s
+    ball_002     name=ball    conf=0.930 state=confirmed pos=(-0.600,+1.600) age=0.0s
+    basket_003   name=basket  conf=0.920 state=confirmed pos=(-0.600,+1.600) age=0.0s
+  after:
+    ball_001     name=ball    conf=0.850 state=confirmed pos=(+0.300,+1.000) age=0.0s
+    ball_002     name=ball    conf=0.930 state=confirmed pos=(-0.600,+1.600) age=0.0s
+    basket_003   name=basket  conf=0.920 state=confirmed pos=(-0.600,+1.600) age=0.0s
+  success = True
+  detail  = ball 距 basket 0.0cm，阈值 15.0cm
+  relation      = {'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 15.0, 'satisfied': True}
+  target.before = ball_002
+  target.after  = ball_002
+  staleness_s   = 0.0
+  warnings      = []
+
+  物理事实：目标球从 (0.30,1.00) 一步没动，任务失败 -> 应 success=False
+
+>>> 结论 [C] FALSE POSITIVE —— 判定按名字 'ball' 取置信度最高者，抽中了桶里的干扰球，报告成功
+
+==============================================================================
+[D] before 是摆设：动作前后完全相同的快照，照样判成功
+==============================================================================
+  before:
+    ball_900     name=ball    conf=0.900 state=confirmed pos=(-0.600,+1.600) age=0.0s
+    basket_901   name=basket  conf=0.920 state=confirmed pos=(-0.600,+1.600) age=0.0s
+  after :
+    ball_900     name=ball    conf=0.900 state=confirmed pos=(-0.600,+1.600) age=0.0s
+    basket_901   name=basket  conf=0.920 state=confirmed pos=(-0.600,+1.600) age=0.0s
+  success = True
+  detail  = ball 距 basket 0.0cm，阈值 15.0cm
+  relation      = {'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 15.0, 'satisfied': True}
+  target.before = ball_900
+  target.after  = ball_900
+  staleness_s   = 0.0
+  warnings      = []
+
+  物理事实：球在动作前就已经在桶里，本次动作什么也没发生（甚至可以是空动作）。
+  verdict_basis 自称 'world_model_diff'，但 build_containment_evidence 只读 after，
+  before 仅被塞进 evidence 展示，从未参与 satisfied 的计算。
+
+>>> 结论 [D] FALSE POSITIVE —— 无差分要求：把'状态已满足'当成'动作已成功'，空动作也能拿到 success=True
+
+==============================================================================
+[E] 陈旧度护栏被默认值关掉：now=0.0（JudgeRequest 默认）时永远不触发
+==============================================================================
+
+------------------------------------------------------------------------------
+  正确传 now=130.0（证据已 30 秒未刷新）:
+  success = False
+  detail  = ball 距 basket 0.0cm，阈值 15.0cm
+  relation      = {'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 15.0, 'satisfied': True}
+  target.before = None
+  target.after  = ball_900
+  staleness_s   = 30.0
+  warnings      = ['证据陈旧 30.00s，视觉确认不可靠']
+
+------------------------------------------------------------------------------
+  调用方忘了传 now（JudgeRequest.now 默认 0.0）:
+  success = True
+  detail  = ball 距 basket 0.0cm，阈值 15.0cm
+  relation      = {'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 15.0, 'satisfied': True}
+  target.before = None
+  target.after  = ball_900
+  staleness_s   = 0.0
+  warnings      = []
+
+  age() 里的 max(0.0, now - last_seen) 把负数夹成 0，时钟不一致/漏传 now 时
+  staleness 恒为 0.0，既不报警也不影响判定 —— 护栏静默失效，无任何提示。
+
+>>> 结论 [E] FALSE POSITIVE —— 30 秒前的陈旧快照被当作实时视觉确认，success 从 False 翻成 True
+
+==============================================================================
+[F] 抓取'双条件'形同虚设：夹爪自报 + 看得见球（不管球在哪）
+==============================================================================
+  after:
+    ball_900     name=ball    conf=0.900 state=confirmed pos=(+1.500,+3.000) age=0.0s
+    basket_901   name=basket  conf=0.920 state=confirmed pos=(-0.600,+1.600) age=0.0s
+{
+  "verdict_basis": "gripper_feedback + visual_confirmation",
+  "gripper_closed": true,
+  "visual_confirmed": true,
+  "satisfied": true,
+  "target": {
+    "obj_id": "ball_900",
+    "name": "ball",
+    "x": 1.5,
+    "z": 3.0,
+    "radius_cm": 3.3,
+    "confidence": 0.9,
+    "state": "confirmed",
+    "first_seen": 0.0,
+    "last_seen": 10.0,
+    "hit_count": 5,
+    "miss_count": 0,
+    "pose_uncertainty_cm": 1.0,
+    "last_bbox": [
+      0,
+      0,
+      10,
+      10
+    ],
+    "last_frame_id": "probe",
+    "source": "probe"
+  },
+  "warnings": []
+}
+
+  物理事实：球在 3 米外的地上，夹爪空抓 -> 应 success=False
+  visual_confirmed 只检查『这个球存在、够新、conf>=0.5』，
+  没有任何『球与夹爪/机械臂的空间关系』检查（别名表里的 left_arm/right_arm 从未被用到）。
+  gripper_closed 又是调用方自报的 —— 双条件退化成一个半自报条件。
+
+>>> 结论 [F] FALSE POSITIVE —— 空抓 + 远处能看见球 = 判定抓取成功，与文档『不能因为发了命令就断言抓住』相悖
+
+------------------------------------------------------------------------------
+  反向：真抓住了，但球被夹爪挡住漏检 1.2s
+  visual_confirmed = False | satisfied = False
+  抓在手里恰恰是最容易被遮挡的姿态，硬 age<1.0s 门槛会稳定误杀。
+
+>>> 结论 [F2] FALSE NEGATIVE —— 抓稳后被夹爪自遮挡 1.2s，双条件判定为未抓住
+
+==============================================================================
+[G] 单帧误检即可作为判定证据：TENTATIVE 对象未被排除
+==============================================================================
+  after:
+    ball_001     name=ball    conf=0.850 state=confirmed pos=(+0.300,+1.000) age=0.0s
+    basket_002   name=basket  conf=0.920 state=confirmed pos=(-0.600,+1.600) age=0.0s
+    ball_003     name=ball    conf=0.970 state=tentative pos=(-0.610,+1.590) age=0.0s
+  success = True
+  detail  = ball 距 basket 1.41cm，阈值 15.0cm
+  relation      = {'type': 'inside', 'distance_cm': 1.41, 'threshold_cm': 15.0, 'satisfied': True}
+  target.before = ball_001
+  target.after  = ball_003
+  staleness_s   = 0.0
+  warnings      = []
+
+  被选中的证据对象 state = ['tentative']
+  hit_count = [1]（confirm_hits=3 都没到）
+  get_scene()/snapshot() 不按 state 过滤，_find 也不看 state，
+  一帧未确认的误检就足以构成『我看见球在桶里』。
+
+>>> 结论 [G] FALSE POSITIVE —— 单帧 TENTATIVE 误检直接充当视觉确认，状态机的 confirm_hits 在判定链路上完全没起作用
+
+==============================================================================
+[H] 几何过宽：2D 圆内 = inside，球在桶边上/桶上方都算进桶
+==============================================================================
+
+------------------------------------------------------------------------------
+  球被夹爪举在桶正上方 30cm（俯视投影完全重合）
+  success=True relation={'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 15.0, 'satisfied': True}
+  warnings=[]
+
+------------------------------------------------------------------------------
+  球架在桶沿上，球心距桶心 14.9cm、球体探出桶外（位姿不确定度 1.0cm）
+  success=False relation={'type': 'inside', 'distance_cm': 14.9, 'threshold_cm': 15.0, 'satisfied': True}
+  warnings=['距离 14.9cm 与阈值 15.0cm 之差小于位姿不确定度 1.0cm']
+
+------------------------------------------------------------------------------
+  同上，但位姿不确定度为 0（RobotPose 默认值 / mock 场景不填该字段时）
+  success=True relation={'type': 'inside', 'distance_cm': 14.9, 'threshold_cm': 15.0, 'satisfied': True}
+  warnings=[]
+
+  阈值 = 容器 radius_cm，判据是『球心落在桶的水平投影圆内』：
+    · 契约本身没有 y —— 举在桶上方 30cm 与掉进桶里，投影完全一样，第 1 例直接判成功 (success=True)；
+    · 阈值取的是桶的外半径、且没有减去球半径，球心一进圆就算数，
+      架在桶沿上（球体一半探到桶外）在几何上同样满足 satisfied=True；
+    · 第 2 例只是侥幸被位姿不确定度护栏拦下 (success=False)，那条护栏拦的是『边界模糊』不是『判据错误』——
+      位姿不确定度取默认值 0 时护栏不再触发，同一个几何直接放行：success=True
+    · radius_cm 还被 _fuse 做 EMA 平滑，阈值本身随观测漂移。
+
+>>> 结论 [H] FALSE POSITIVE —— 『举在桶上方』与『掉进桶里』判据上不可区分（success=True）；架在桶沿的球在 pose_uncertainty=0 时同样放行（False -> True）
+
+==============================================================================
+[I] 判定无置信度下限：几乎要 LOST 的对象照样构成视觉确认
+==============================================================================
+  after:
+    ball_900     name=ball    conf=0.160 state=stale     pos=(-0.600,+1.600) age=0.0s
+    basket_901   name=basket  conf=0.920 state=confirmed pos=(-0.600,+1.600) age=0.0s
+  success = True
+  detail  = ball 距 basket 0.0cm，阈值 15.0cm
+  relation      = {'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 15.0, 'satisfied': True}
+  target.before = None
+  target.after  = ball_900
+  staleness_s   = 0.0
+  warnings      = []
+
+  confidence=0.16（lost_threshold=0.15，再掉一点就被归档），state=STALE，
+  containment 判定链路上没有任何 min_confidence / state 检查 -> 照样 success=True。
+  抓取判定有 conf>=0.5 的下限，容器判定没有 —— 两条路径口径不一致。
+
+>>> 结论 [I] FALSE POSITIVE —— STALE + conf=0.16 的残留信念被当作实时视觉确认
+
+==============================================================================
+[J] 同一份响应里两个互相矛盾的真值：success=False 但 relation.satisfied=True
+==============================================================================
+  success = False
+  detail  = ball 距 basket 0.0cm，阈值 15.0cm
+  relation      = {'type': 'inside', 'distance_cm': 0.0, 'threshold_cm': 15.0, 'satisfied': True}
+  target.before = None
+  target.after  = ball_900
+  staleness_s   = 5.0
+  warnings      = ['证据陈旧 5.00s，视觉确认不可靠']
+
+  success 走 `rel['satisfied'] and not warnings`，relation.satisfied 只看距离。
+  下游读 success 得到『失败』，读 evidence.relation.satisfied 得到『成立』。
+  detail 文案只报距离，完全没提陈旧 —— 失败原因在 detail 里丢失。
+
+>>> 结论 [J] 契约风险 —— 响应内含两个可被下游分别采信的矛盾结论，且 detail 不解释失败原因
+
+==============================================================================
+[K] provider 注册表：未实现路线会抛异常穿透冻结的 HTTP 契约
+==============================================================================
+  get_provider('reward_classifier') -> <judge.providers.RewardClassifierProvider object at 0x100b7f580>
+  judge() 抛 NotImplementedError: 等数据源与 checkpoint 确定
+  带 checkpoint_path 构造成功
+  get_provider('world_model_diff', checkpoint_path=...) -> TypeError: WorldModelDiffProvider() takes no arguments
+
+  三个 provider 同注册在 PROVIDERS 里，但只有一个能返回 JudgeResponse；
+  另外两个从 judge() 抛异常 —— 对『外壳已冻结』的服务来说这是 500 而不是 success=False。
+
+>>> 结论 [K] 契约风险 —— 未实现 provider 以异常而非 JudgeResponse 失败；get_provider 的 **kwargs 对已实现 provider 不可用
+
+==============================================================================
+[L] 对照组：目标/容器缺失时的行为（保守，符合预期）
+==============================================================================
+  success = False
+  detail  = 缺少目标或容器观测
+  relation      = None
+  target.before = None
+  target.after  = None
+  staleness_s   = None
+  warnings      = ['目标 ball 在动作后快照中不存在']
+
+  未支持任务类型 -> success=False, detail=未支持的任务类型: wipe_table, evidence={}
+
+>>> 结论 [L] OK —— 缺观测与未知任务类型都保守判失败，evidence 结构完整；这条路径没有虚假判定
+
+==============================================================================
+[M] 对外契约导出：时间戳纪元错误 + 断轨后两条同名 ball 无法区分
+==============================================================================
+[
+  {
+    "name": "ball",
+    "aliases": [
+      "sports ball",
+      "tennis ball",
+      "球",
+      "网球",
+      "小球"
+    ],
+    "x": 0.1432,
+    "z": 1.1652,
+    "radius_cm": 3.3,
+    "source": "probe",
+    "timestamp": "1970-01-01T00:00:01Z",
+    "confidence": 0.377
+  },
+  {
+    "name": "basket",
+    "aliases": [
+      "basket",
+      "bucket",
+      "篮子",
+      "桶",
+      "框"
+    ],
+    "x": -0.6,
+    "z": 1.6,
+    "radius_cm": 15.0,
+    "source": "probe",
+    "timestamp": "1970-01-01T00:00:03Z",
+    "confidence": 0.927
+  },
+  {
+    "name": "ball",
+    "aliases": [
+      "sports ball",
+      "tennis ball",
+      "球",
+      "网球",
+      "小球"
+    ],
+    "x": -0.58,
+    "z": 1.61,
+    "radius_cm": 3.3,
+    "source": "probe",
+    "timestamp": "1970-01-01T00:00:03Z",
+    "confidence": 0.88
+  }
+]
+
+  导出了 2 条 name='ball'：[(0.1432, 1.1652, 0.377), (-0.58, 1.61, 0.88)]
+  契约里没有 id 字段，也没有 state —— 下游拿到两个『球』，
+  无法知道其中一条是 conf=0.377 的 STALE 残留信念，只能自己猜或全都当真。
+
+  timestamp = 1970-01-01T00:00:01Z ← 场景相对秒被 _iso() 当成 Unix 纪元格式化。
+  下游若按这个时间戳算陈旧度，会得到 56 年；换成真实 time.time() 又与 mock/回放时钟不一致。
+
+>>> 结论 [M] 契约风险 —— scene_observations 无 id/state 字段，断轨后同名对象不可区分；timestamp 落在 1970 年
+
+==============================================================================
+汇总
+==============================================================================
+  [A ] FRAGILE         结论对，但对的原因是置信度竞赛而非物理；无任何 warning 提示身份已切换
+  [B ] FALSE NEGATIVE  球已进桶却判失败：判定结果由两条轨迹的置信度大小决定（0.88->ball_003 success=True，0.55->ball_001 success=False）
+  [C ] FALSE POSITIVE  判定按名字 'ball' 取置信度最高者，抽中了桶里的干扰球，报告成功
+  [D ] FALSE POSITIVE  无差分要求：把'状态已满足'当成'动作已成功'，空动作也能拿到 success=True
+  [E ] FALSE POSITIVE  30 秒前的陈旧快照被当作实时视觉确认，success 从 False 翻成 True
+  [F ] FALSE POSITIVE  空抓 + 远处能看见球 = 判定抓取成功，与文档『不能因为发了命令就断言抓住』相悖
+  [F2] FALSE NEGATIVE  抓稳后被夹爪自遮挡 1.2s，双条件判定为未抓住
+  [G ] FALSE POSITIVE  单帧 TENTATIVE 误检直接充当视觉确认，状态机的 confirm_hits 在判定链路上完全没起作用
+  [H ] FALSE POSITIVE  『举在桶上方』与『掉进桶里』判据上不可区分（success=True）；架在桶沿的球在 pose_uncertainty=0 时同样放行（False -> True）
+  [I ] FALSE POSITIVE  STALE + conf=0.16 的残留信念被当作实时视觉确认
+  [J ] 契约风险            响应内含两个可被下游分别采信的矛盾结论，且 detail 不解释失败原因
+  [K ] 契约风险            未实现 provider 以异常而非 JudgeResponse 失败；get_provider 的 **kwargs 对已实现 provider 不可用
+  [L ] OK              缺观测与未知任务类型都保守判失败，evidence 结构完整；这条路径没有虚假判定
+  [M ] 契约风险            scene_observations 无 id/state 字段，断轨后同名对象不可区分；timestamp 落在 1970 年
+
+  假阳性 7 条 / 假阴性 2 条 / 其余 5 条为脆弱或契约风险

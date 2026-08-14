@@ -1,0 +1,224 @@
+# python run_demo.py（修复后）— 2026-08-11 17:47:31 AEST
+
+==========================================================================
+
+[t=  0.0s] 检测 2 个 | yaw=0.00rad
+   ball_001     conf=0.950 state=tentative pos=(+0.10,+1.20) age=0.0s 视野内 hit=1 miss=0
+   basket_002   conf=0.900 state=tentative pos=(-0.60,+1.60) age=0.0s 视野内 hit=1 miss=0
+
+[t=  0.5s] 检测 2 个 | yaw=0.00rad
+   ball_001     conf=0.943 state=tentative pos=(+0.12,+1.19) age=0.0s 视野内 hit=2 miss=0
+   basket_002   conf=0.907 state=tentative pos=(-0.60,+1.60) age=0.0s 视野内 hit=2 miss=0
+
+[t=  1.0s] 检测 2 个 | yaw=0.00rad
+   ball_001     conf=0.955 state=confirmed pos=(+0.14,+1.17) age=0.0s 视野内 hit=3 miss=0
+   basket_002   conf=0.916 state=confirmed pos=(-0.60,+1.60) age=0.0s 视野内 hit=3 miss=0
+
+[t=  1.5s] 检测 1 个 | yaw=0.00rad
+   ball_001     conf=0.758 state=confirmed pos=(+0.14,+1.17) age=0.5s 视野内 hit=3 miss=1
+   basket_002   conf=0.919 state=confirmed pos=(-0.60,+1.60) age=0.0s 视野内 hit=4 miss=0
+
+[t=  2.5s] 检测 0 个 | yaw=1.70rad
+   ball_001     conf=0.749 state=confirmed pos=(+0.14,+1.17) age=1.5s 视野外 hit=3 miss=1
+   basket_002   conf=0.916 state=confirmed pos=(-0.60,+1.60) age=1.0s 视野外 hit=4 miss=0
+
+[t=  6.0s] 检测 0 个 | yaw=1.70rad
+   ball_001     conf=0.720 state=confirmed pos=(+0.14,+1.17) age=5.0s 视野外 hit=3 miss=1
+   basket_002   conf=0.907 state=confirmed pos=(-0.60,+1.60) age=4.5s 视野外 hit=4 miss=0
+
+[t=  7.0s] 检测 2 个 | yaw=0.00rad
+   ball_001     conf=0.867 state=confirmed pos=(+0.18,+1.14) age=0.0s 视野内 hit=4 miss=1
+   basket_002   conf=0.916 state=confirmed pos=(-0.60,+1.60) age=0.0s 视野内 hit=5 miss=0
+
+[t=  9.0s] 检测 2 个 | yaw=0.00rad
+   ball_001     conf=0.876 state=confirmed pos=(-0.56,+1.60) age=0.0s 视野内 hit=5 miss=1
+   basket_002   conf=0.926 state=confirmed pos=(-0.60,+1.60) age=0.0s 视野内 hit=6 miss=0
+
+==========================================================================
+对外契约 scene_observations:
+[
+  {
+    "name": "ball",
+    "aliases": [
+      "sports ball",
+      "tennis ball",
+      "球",
+      "网球",
+      "小球"
+    ],
+    "x": -0.5605,
+    "z": 1.598,
+    "radius_cm": 3.3,
+    "source": "mock_detector",
+    "timestamp": "2026-08-11T03:00:09Z",
+    "confidence": 0.8761
+  },
+  {
+    "name": "basket",
+    "aliases": [
+      "basket",
+      "bucket",
+      "篮子",
+      "桶",
+      "框"
+    ],
+    "x": -0.6,
+    "z": 1.6,
+    "radius_cm": 15.0,
+    "source": "mock_detector",
+    "timestamp": "2026-08-11T03:00:09Z",
+    "confidence": 0.9258
+  }
+]
+
+==========================================================================
+Judge 判定（evidence 不再是空字典）:
+success = True
+detail  = ball -> basket 判定成立（距离 3.95cm / 阈值 11.7cm）
+{
+  "verdict_basis": "world_model_diff",
+  "verdict": {
+    "success": true,
+    "reasons": [],
+    "caveats": [
+      "no_height_evidence",
+      "heuristic_confidence"
+    ]
+  },
+  "target": {
+    "name": "ball",
+    "obj_id": "ball_001",
+    "before": {
+      "obj_id": "ball_001",
+      "name": "ball",
+      "x": 0.17999938259845122,
+      "z": 1.1400004227858431,
+      "radius_cm": 3.3,
+      "confidence": 0.8668532373210109,
+      "state": "confirmed",
+      "first_seen": 0.0,
+      "last_seen": 7.0,
+      "hit_count": 4,
+      "miss_count": 1,
+      "pose_uncertainty_cm": 1.0,
+      "last_bbox": [
+        307,
+        226,
+        347,
+        266
+      ],
+      "last_frame_id": "f0006",
+      "source": "mock_detector"
+    },
+    "after": {
+      "obj_id": "ball_001",
+      "name": "ball",
+      "x": -0.5605440158054796,
+      "z": 1.5979680108233176,
+      "radius_cm": 3.3,
+      "confidence": 0.8760559711963032,
+      "state": "confirmed",
+      "first_seen": 0.0,
+      "last_seen": 9.0,
+      "hit_count": 5,
+      "miss_count": 1,
+      "pose_uncertainty_cm": 1.0,
+      "last_bbox": [
+        150,
+        230,
+        180,
+        260
+      ],
+      "last_frame_id": "f0007",
+      "source": "mock_detector"
+    }
+  },
+  "container": {
+    "name": "basket",
+    "obj_id": "basket_002",
+    "before": {
+      "obj_id": "basket_002",
+      "name": "basket",
+      "x": -0.6,
+      "z": 1.6,
+      "radius_cm": 15.0,
+      "confidence": 0.9160897044247953,
+      "state": "confirmed",
+      "first_seen": 0.0,
+      "last_seen": 7.0,
+      "hit_count": 5,
+      "miss_count": 0,
+      "pose_uncertainty_cm": 1.0,
+      "last_bbox": [
+        120,
+        200,
+        220,
+        300
+      ],
+      "last_frame_id": "f0006",
+      "source": "mock_detector"
+    },
+    "after": {
+      "obj_id": "basket_002",
+      "name": "basket",
+      "x": -0.6,
+      "z": 1.6,
+      "radius_cm": 15.0,
+      "confidence": 0.9258269113274387,
+      "state": "confirmed",
+      "first_seen": 0.0,
+      "last_seen": 9.0,
+      "hit_count": 6,
+      "miss_count": 0,
+      "pose_uncertainty_cm": 1.0,
+      "last_bbox": [
+        120,
+        200,
+        220,
+        300
+      ],
+      "last_frame_id": "f0007",
+      "source": "mock_detector"
+    }
+  },
+  "relation": {
+    "type": "inside",
+    "distance_cm": 3.95,
+    "threshold_cm": 11.7,
+    "satisfied": true,
+    "before_distance_cm": 90.55,
+    "before_satisfied": false
+  },
+  "observations": [
+    {
+      "name": "ball",
+      "obj_id": "ball_001",
+      "frame_id": "f0007",
+      "bbox": [
+        150,
+        230,
+        180,
+        260
+      ],
+      "confidence": 0.8761,
+      "state": "confirmed",
+      "source": "mock_detector"
+    },
+    {
+      "name": "basket",
+      "obj_id": "basket_002",
+      "frame_id": "f0007",
+      "bbox": [
+        120,
+        200,
+        220,
+        300
+      ],
+      "confidence": 0.9258,
+      "state": "confirmed",
+      "source": "mock_detector"
+    }
+  ],
+  "staleness_s": 0.0,
+  "warnings": []
+}
