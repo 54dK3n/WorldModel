@@ -1,0 +1,60 @@
+# pytest（修复后）— 2026-08-11 17:47:30 AEST
+# Python 3.9.6 | pytest pytest 8.4.2
+
+============================= test session starts ==============================
+platform darwin -- Python 3.9.6, pytest-8.4.2, pluggy-1.6.0 -- /private/tmp/claude-501/-Users-ken-wm-kit/e20e15e7-b132-41a5-8c9c-3170975224ee/scratchpad/venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/ken/wm_kit
+collecting ... collected 49 items
+
+tests/test_judge.py::test_large_displacement_keeps_track_identity PASSED [  2%]
+tests/test_judge.py::test_put_in_basket_succeeds PASSED                  [  4%]
+tests/test_judge.py::test_verdict_does_not_flip_with_detection_score[0.88] PASSED [  6%]
+tests/test_judge.py::test_verdict_does_not_flip_with_detection_score[0.7] PASSED [  8%]
+tests/test_judge.py::test_verdict_does_not_flip_with_detection_score[0.55] PASSED [ 10%]
+tests/test_judge.py::test_position_not_left_halfway_after_big_move PASSED [ 12%]
+tests/test_judge.py::test_identity_broken_is_reported_not_papered_over PASSED [ 14%]
+tests/test_judge.py::test_distractor_in_container_does_not_count PASSED  [ 16%]
+tests/test_judge.py::test_ambiguous_target_is_refused_not_guessed PASSED [ 18%]
+tests/test_judge.py::test_no_state_change_is_not_success PASSED          [ 20%]
+tests/test_judge.py::test_fresh_evidence_passes PASSED                   [ 22%]
+tests/test_judge.py::test_stale_evidence_rejected PASSED                 [ 24%]
+tests/test_judge.py::test_clock_skew_rejected PASSED                     [ 26%]
+tests/test_judge.py::test_age_is_not_clamped PASSED                      [ 28%]
+tests/test_judge.py::test_empty_grasp_with_visible_ball_is_not_success PASSED [ 30%]
+tests/test_judge.py::test_grasp_survives_self_occlusion PASSED           [ 32%]
+tests/test_judge.py::test_grasp_without_gripper_pose_is_conservative PASSED [ 34%]
+tests/test_judge.py::test_grasp_requires_gripper_feedback PASSED         [ 36%]
+tests/test_judge.py::test_single_frame_false_detection_is_not_evidence PASSED [ 38%]
+tests/test_judge.py::test_low_confidence_belief_is_not_visual_confirmation PASSED [ 40%]
+tests/test_judge.py::test_ball_on_rim_is_not_inside PASSED               [ 42%]
+tests/test_judge.py::test_still_grasped_blocks_placement_verdict PASSED  [ 44%]
+tests/test_judge.py::test_height_limitation_is_always_disclosed PASSED   [ 46%]
+tests/test_judge.py::test_response_has_single_source_of_truth PASSED     [ 48%]
+tests/test_judge.py::test_reasons_are_deduped PASSED                     [ 51%]
+tests/test_judge.py::test_unimplemented_provider_returns_response_not_exception PASSED [ 53%]
+tests/test_judge.py::test_get_provider_rejects_foreign_kwargs PASSED     [ 55%]
+tests/test_judge.py::test_unknown_task_is_refused PASSED                 [ 57%]
+tests/test_judge.py::test_policy_is_overridable PASSED                   [ 59%]
+tests/test_world_model.py::test_id_stable_across_frames PASSED           [ 61%]
+tests/test_world_model.py::test_confirmed_after_enough_hits PASSED       [ 63%]
+tests/test_world_model.py::test_alias_resolution PASSED                  [ 65%]
+tests/test_world_model.py::test_occlusion_does_not_delete_object PASSED  [ 67%]
+tests/test_world_model.py::test_out_of_fov_decays_slower_than_missed_in_fov PASSED [ 69%]
+tests/test_world_model.py::test_miss_count_only_increments_in_fov PASSED [ 71%]
+tests/test_world_model.py::test_object_becomes_lost_and_leaves_snapshot PASSED [ 73%]
+tests/test_world_model.py::test_is_in_fov[0.0-1.0-0.0-True] PASSED       [ 75%]
+tests/test_world_model.py::test_is_in_fov[0.0--1.0-0.0-False] PASSED     [ 77%]
+tests/test_world_model.py::test_is_in_fov[0.0-1.0-3.141592653589793-False] PASSED [ 79%]
+tests/test_world_model.py::test_is_in_fov[0.0-10.0-0.0-False] PASSED     [ 81%]
+tests/test_world_model.py::test_is_in_fov[0.0-0.05-0.0-False] PASSED     [ 83%]
+tests/test_world_model.py::test_gating_rejects_far_detection PASSED      [ 85%]
+tests/test_world_model.py::test_class_mismatch_not_associated PASSED     [ 87%]
+tests/test_world_model.py::test_greedy_assignment_prefers_nearest PASSED [ 89%]
+tests/test_world_model.py::test_scene_observations_schema PASSED         [ 91%]
+tests/test_world_model.py::test_timestamp_uses_time_origin PASSED        [ 93%]
+tests/test_world_model.py::test_gate_scales_with_dt PASSED               [ 95%]
+tests/test_world_model.py::test_gate_still_rejects_teleport PASSED       [ 97%]
+tests/test_world_model.py::test_smoothing_matches_old_behaviour_at_nominal_dt PASSED [100%]
+
+============================== 49 passed in 0.02s ==============================
