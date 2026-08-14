@@ -17,12 +17,23 @@ from typing import Dict, List, Sequence
 from .types import TrackedObject
 
 
-def _iso(ts: float) -> str:
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+def _iso(ts: float, time_origin: float = 0.0) -> str:
+    """内部时刻 -> ISO8601。
+
+    内部时间是"场景相对秒"（回放/mock 从 0 开始），不是 Unix 时间。
+    time_origin 是相对时刻 0.0 对应的 Unix 时间；不传就默认内部时间已经是
+    Unix 时间。原来这里直接把相对秒当纪元格式化，导出的时间戳全是
+    1970-01-01T00:00:0Xz，下游拿它算陈旧度会得到 56 年。
+    """
+    return datetime.fromtimestamp(time_origin + ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def to_scene_observation(obj: TrackedObject) -> Dict:
-    """宋红的 scene_observations 契约。字段严格对齐，不多不少。"""
+def to_scene_observation(obj: TrackedObject, time_origin: float = 0.0) -> Dict:
+    """宋红的 scene_observations 契约。字段严格对齐，不多不少。
+
+    待确认：契约里没有 id 也没有 state，同名多实例（干扰物、断轨残留）
+    下游无法区分。加字段要对方签字，先记在 DESIGN.md 待确认清单里。
+    """
     return {
         "name": obj.name,
         "aliases": obj.aliases,
@@ -30,16 +41,16 @@ def to_scene_observation(obj: TrackedObject) -> Dict:
         "z": round(obj.z, 4),
         "radius_cm": round(obj.radius_cm, 2),
         "source": obj.source,
-        "timestamp": _iso(obj.last_seen),
+        "timestamp": _iso(obj.last_seen, time_origin),
         "confidence": round(obj.confidence, 4),
     }
 
 
-def to_scene_observations(objs: Sequence[TrackedObject]) -> List[Dict]:
-    return [to_scene_observation(o) for o in objs]
+def to_scene_observations(objs: Sequence[TrackedObject], time_origin: float = 0.0) -> List[Dict]:
+    return [to_scene_observation(o, time_origin) for o in objs]
 
 
-def to_base_link_pose(obj: TrackedObject, y: float = 0.0) -> Dict:
+def to_base_link_pose(obj: TrackedObject, y: float = 0.0, time_origin: float = 0.0) -> Dict:
     """任务规划文档那套三维桌面版契约。备用适配器。"""
     return {
         "id": obj.obj_id,
@@ -47,7 +58,7 @@ def to_base_link_pose(obj: TrackedObject, y: float = 0.0) -> Dict:
         "pose": {"frame": "base_link", "x": obj.x, "y": y, "z": obj.z},
         "state": obj.state.value,
         "confidence": obj.confidence,
-        "last_seen": _iso(obj.last_seen),
+        "last_seen": _iso(obj.last_seen, time_origin),
     }
 
 

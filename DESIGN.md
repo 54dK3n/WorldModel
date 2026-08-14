@@ -116,6 +116,14 @@ MockProvider（读 JSON 场景序列）   ← 今天就能开工，零硬件依�
 3. 多个观测冲突时以谁为准（最新 / 最高置信度 / 加权融合）？
 4. World Model 是进程内库还是独立 HTTP 服务？（判定服务写死了 HTTP，World Model 文档没说）
 
+### 问判定服务外壳 owner（2026-08-11 复核新增）
+A. `JudgeRequest` 能否加 `target_id` / `container_id`？没有稳定 id，判定主语只能靠名字猜，
+   场景里出现第二个同类物体（干扰球、断轨残留）就是歧义。当前走 `JudgeContext` 旁路。
+B. `JudgeRequest` 能否加 `gripper_pose`（末端 x/z）？没有它，"视觉确认"退化成"球还在世界上"，
+   抓取双条件不成立。
+C. `now` 的时钟源是墙钟 / ROS 时间 / 回放时间？三者混用时陈旧度护栏会被绕开。
+D. `scene_observations` 能否加 `id` 与 `state`？下游现在无法区分实时观测与残留信念。
+
 ### 问带教
 5. 输出契约以哪套为准：任务规划文档的 `pose{frame: base_link, x,y,z} + class`（机械臂桌面三维），还是 SimCar 的 `name/aliases/x/z/radius_cm/source`（小车地面二维）？还是内部一套 + 两个适配器？
 6. 观测数据落点锁定哪个？—— 这与宋红第 1 周就挂着的遗留问题 #2「判定图像从哪来？」是同一个问题。
@@ -172,16 +180,41 @@ MockProvider（读 JSON 场景序列）   ← 今天就能开工，零硬件依�
 
 ## 十、骨架跑通结果与已知局限
 
-`python run_demo.py` + `pytest tests/ -q`（16 passed）已跑通。
+`python run_demo.py` + `pytest tests/ -q`（49 passed）+ `python tools/false_verdict_probe.py`（16 PASS / 0 FAIL）已跑通。
 
 **验证到的关键不变式**
 - 遮挡（t=1.5s，视野内漏检）：`ball_001` 置信度 0.955 → 0.758，对象未被删除，`last_seen` 停在真实观测时刻
 - 转身出视野（t=2.5→6.0s，3.5 秒）：置信度仅 0.749 → 0.720，`miss_count` 不增加 —— **转个身没把世界忘光**
 - 重新看到（t=7.0s）：置信度恢复到 0.867，`obj_id` 保持不变
-- Judge `evidence` 不再是 `{}`，含前后快照、距离/阈值、帧引用、bbox、陈旧度、警告
+- 放球（t=9.0s，位移 0.89m）：`obj_id` 仍为 `ball_001`，位置落到 (-0.56, 1.60)
+- Judge `evidence` 不再是 `{}`，含前后快照、距离/阈值、帧引用、bbox、陈旧度、原因码
 
-**跑出来的一个真问题（不是 bug，是设计缺口）**
+### 10.1 第一版骨架的判定缺陷与修复（2026-08-11）
 
-t=9.0s 球被放进桶，位移 0.75m > 门控 0.5m，系统把它当成新对象 `ball_003`，老的 `ball_001` 掉到 stale。
-**固定门控在长帧间隔下会断轨。** 正确做法是门控随 dt 缩放（`gate = base + v_max * dt`）或加恒速运动模型。
-已标记为 P1，写在 `association.py`。这个问题只在低帧率/大位移时暴露，正好是真机接入后要面对的。
+第一版跑通了，但专项复核发现**判定内核会给出虚假判定**：7 条假阳性、2 条假阴性。
+根因不在信念怎么维护，在**信念怎么被判定层消费**。已全部修复，逐条固化成回归单测。
+
+| 缺陷 | 修复 |
+|---|---|
+| 判定对象按 `name` 取 `max(confidence)` —— 干扰物 / 断轨残留 / 单帧误检都可能被抽中 | 用 `before` 锁定 `obj_id`，在 `after` 里按同一 id 找；断轨报 `identity_broken`，同名多实例报 `ambiguous_target`，都判失败而不是猜 |
+| `satisfied` 只看 `after` —— 空动作、球本来就在桶里照样报成功 | 要求 `before` 不满足且 `after` 满足，否则 `no_state_change` |
+| 护栏是事后 warning，两条判定路径口径不一致，状态机从没被查过 | 统一前置条件 `check_quality()`（置信度 / CONFIRMED / 陈旧度 / 时钟），输出机器可读 reason code |
+| `age()` 把负数夹成 0，`now` 漏传时陈旧度护栏静默失效 | `age()` 如实返回负值，判定层显式检出 `clock_skew` |
+| 抓取"双条件"退化成一个自报条件 —— 球在三米外也算视觉确认 | 视觉确认要求目标在夹爪可及范围内；同时给自遮挡 1.5s 宽限，不再误杀真抓取 |
+| `success` 与 `relation.satisfied` 互相矛盾，`detail` 只报距离 | `relation.satisfied` 明确只表示几何成立；判定结论唯一来源是 `verdict.success`；`detail` 必须解释原因 |
+| 固定门控 0.5m 在长帧间隔下断轨（原文标 P1） | 门控随 dt 缩放 `gate = min(base + v_max·dt, 上限)`；**优先级提到 P0 —— 断轨会一路传导成判定翻转** |
+| 固定 EMA 平滑在大位移后把位置留在半路 | 平滑改成时间常数固定的指数滤波，名义帧间隔下与原行为一致 |
+| 契约 `timestamp` 把相对秒当 Unix 纪元，导出 1970 年 | 引入 `time_origin`，场景 JSON 声明原点，`wm.to_contract()` 走这条路 |
+| 未实现 provider 从 `judge()` 抛异常（对冻结的 HTTP 外壳是 500） | 返回 `JudgeResponse(success=False, ...)`；`get_provider` 的错配 kwargs 报清楚的 TypeError |
+
+**仍未解决（需契约层决策，不是代码能修的）**
+
+1. **契约只有 x/z 没有 y** —— "球被举在桶正上方"与"球掉进桶里"俯视投影完全相同。
+   当前对策：夹爪仍闭合时判 `still_grasped`；每条 containment 判定都带 `no_height_evidence` 提示。
+   真正解决要么加 y，要么加接触/支撑判定。
+2. **`scene_observations` 没有 `id` / `state` 字段** —— 真实场景同名多实例（多个球）下游无法区分。
+   判定层已能用 id 自保，但对外契约还不行。加字段要契约 owner 签字。
+3. **`JudgeRequest` 缺 `target_id` / `gripper_pose`** —— 外壳已冻结，当前走 `JudgeContext` 旁路传。
+   不传时判定会保守失败并给出原因码，不会假装确认。
+4. **`confidence` 是启发式分数不是概率** —— 融合公式带下限保护，所有基于它的阈值都是经验值，
+   真机标定后要重新定。evidence 里以 `heuristic_confidence` 提示。

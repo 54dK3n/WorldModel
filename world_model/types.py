@@ -85,5 +85,11 @@ class TrackedObject:
     last_frame_id: Optional[str] = None
 
     def age(self, now: float) -> float:
-        """距上次被真实看到过了多久（秒）。"""
-        return max(0.0, now - self.last_seen)
+        """距上次被真实看到过了多久（秒）。
+
+        **刻意不做 max(0.0, ...) 夹取。** 返回负数说明 now 早于 last_seen，
+        即调用方时钟与观测时钟不一致。夹成 0 会让判定层的陈旧度护栏静默失效
+        —— 一份很旧的快照会被当成"刚刚看到"（见 judge 的 clock_skew 检查）。
+        需要非负值的地方（如衰减 dt）自己夹。
+        """
+        return now - self.last_seen

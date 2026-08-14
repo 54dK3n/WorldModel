@@ -27,13 +27,17 @@ class WorldModel:
         assoc_cfg: Optional[AssociationConfig] = None,
         decay_cfg: Optional[DecayConfig] = None,
         fov_cfg: Optional[FovConfig] = None,
-        position_smoothing: float = 0.6,   # 新观测权重，1.0 = 完全信新观测
+        position_smoothing: float = 0.6,   # 名义帧间隔下的新观测权重，1.0 = 完全信新观测
+        nominal_dt_s: float = 0.5,         # position_smoothing 对应的名义帧间隔
+        time_origin: float = 0.0,          # 内部时刻 0.0 对应的 Unix 时间，见 adapters._iso
     ):
         self.aliases = aliases or AliasTable()
         self.assoc_cfg = assoc_cfg or AssociationConfig()
         self.decay_cfg = decay_cfg or DecayConfig()
         self.fov_cfg = fov_cfg or FovConfig()
         self.position_smoothing = position_smoothing
+        self.nominal_dt_s = nominal_dt_s
+        self.time_origin = time_origin
 
         self._objects: Dict[str, TrackedObject] = {}
         self._id_counter = itertools.count(1)
@@ -52,7 +56,7 @@ class WorldModel:
             self.pose = pose
 
         tracks = list(self._objects.values())
-        result = associate(tracks, detections, self.aliases, self.assoc_cfg)
+        result = associate(tracks, detections, self.aliases, self.assoc_cfg, now=now)
 
         for t_idx, d_idx in result.matches:
             self._fuse(tracks[t_idx], detections[d_idx], now)
@@ -66,8 +70,20 @@ class WorldModel:
         # LOST 的移出活跃表，但不物理销毁（文档要求：遮挡不能删除物体）
         self._archive_lost()
 
+    def _smoothing_for(self, dt: float) -> float:
+        """把固定权重换成时间常数固定的指数滤波。
+
+        帧间隔 == nominal_dt_s 时退化为 position_smoothing（与原行为逐位一致），
+        间隔越长越信新观测。固定权重在长间隔 + 大位移下会把位置留在起终点之间 ——
+        球明明进了桶，融合后的坐标却停在半路，containment 判定直接假阴性。
+        """
+        a0 = self.position_smoothing
+        if dt <= 0.0 or a0 >= 1.0:
+            return a0
+        return min(1.0, 1.0 - (1.0 - a0) ** (dt / self.nominal_dt_s))
+
     def _fuse(self, obj: TrackedObject, det: Detection, now: float) -> None:
-        a = self.position_smoothing
+        a = self._smoothing_for(max(0.0, now - obj.last_seen))
         obj.x = a * det.x + (1 - a) * obj.x
         obj.z = a * det.z + (1 - a) * obj.z
         obj.radius_cm = a * det.radius_cm + (1 - a) * obj.radius_cm
@@ -125,3 +141,12 @@ class WorldModel:
     def snapshot(self) -> List[TrackedObject]:
         """深拷贝，给 Judge 做动作前后差分。"""
         return copy.deepcopy(list(self._objects.values()))
+
+    def to_contract(self) -> List[Dict]:
+        """导出 scene_observations，带上本模型自己的时钟原点。
+
+        直接调 to_scene_observations(wm.get_scene()) 也能跑，但那样时钟原点要靠
+        调用方记得传；走这个入口不会把相对秒当成 Unix 时间输出（1970 那个坑）。
+        """
+        from .adapters import to_scene_observations
+        return to_scene_observations(self.get_scene(), time_origin=self.time_origin)

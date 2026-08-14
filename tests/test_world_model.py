@@ -160,3 +160,39 @@ def test_scene_observations_schema():
         "name", "aliases", "x", "z", "radius_cm",
         "source", "timestamp", "confidence",
     }
+
+
+def test_timestamp_uses_time_origin():
+    """内部时间是场景相对秒，直接当 Unix 纪元格式化会导出 1970 年。"""
+    wm = WorldModel(time_origin=1786417200.0)     # 2026-08-11T03:00:00Z
+    wm.update([det(x=0.1, z=1.2)], RobotPose(), now=9.0)
+    assert wm.to_contract()[0]["timestamp"] == "2026-08-11T03:00:09Z"
+
+
+# ------------------------------------------------------------ 门控随 dt 自适应
+
+def test_gate_scales_with_dt():
+    """固定门控在长帧间隔下会断轨，断轨会让判定层在同名轨迹间二选一。"""
+    wm = WorldModel()
+    wm.update([det(x=0.0, z=1.0)], RobotPose(), now=0.0)
+    oid = wm.get_scene()[0].obj_id
+    # 2 秒后移动 0.8m：超过基础门控 0.5m，但在 0.5 + 0.5*2.0 = 1.5m 之内
+    wm.update([det(x=0.8, z=1.0)], RobotPose(), now=2.0)
+    assert len(wm.get_scene()) == 1, "合法位移不该断轨"
+    assert wm.get_scene()[0].obj_id == oid
+
+
+def test_gate_still_rejects_teleport():
+    """放宽门控不等于什么都配 —— 上限 2.0m 之外仍然新建对象。"""
+    wm = WorldModel()
+    wm.update([det(x=0.0, z=1.0)], RobotPose(), now=0.0)
+    wm.update([det(x=5.0, z=1.0)], RobotPose(), now=2.0)
+    assert len(wm.get_scene()) == 2
+
+
+def test_smoothing_matches_old_behaviour_at_nominal_dt():
+    """名义帧间隔下与原固定权重逐位一致，长间隔才更信新观测。"""
+    wm = WorldModel(position_smoothing=0.6, nominal_dt_s=0.5)
+    assert wm._smoothing_for(0.5) == pytest.approx(0.6)
+    assert wm._smoothing_for(2.0) > 0.9
+    assert wm._smoothing_for(0.1) < 0.6

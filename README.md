@@ -7,8 +7,9 @@
 ## 跑起来
 
 ```bash
-python run_demo.py        # 端到端：mock感知 -> World Model -> 契约 -> Judge evidence
-python -m pytest tests/ -q # 16 passed
+python run_demo.py                   # 端到端：mock感知 -> World Model -> 契约 -> Judge evidence
+python -m pytest tests/ -q           # 49 passed
+python tools/false_verdict_probe.py  # 判定可靠性探针：16 PASS / 0 FAIL / 1 已知边界
 ```
 
 零外部依赖（仅 pytest 用于测试）。
@@ -29,11 +30,18 @@ wm_kit/
 │       ├── base.py               provider 抽象 + 相机provider桩（#1检测 #2地平面求交）
 │       └── mock.py               读 JSON 场景序列，零硬件
 ├── judge/
-│   ├── evidence.py               填 Judge 契约里恒为 {} 的 evidence 字段
+│   ├── evidence.py               填 evidence 字段：身份锁定 + 前置条件 + reason code
 │   └── providers.py              WorldModelDiff(已实现) / RewardClassifier(待填) / YoloOverlap(备选)
 ├── scenes/demo_scene.json        覆盖四类验收场景的 mock 观测序列
-└── tests/test_world_model.py     16 条单测
+├── tools/false_verdict_probe.py  判定可靠性探针：对抗场景，查虚假判定
+├── logs/                         各次运行的输出记录
+└── tests/
+    ├── test_world_model.py       20 条：信念维护的不变式
+    └── test_judge.py             29 条：每条对应一个曾经的虚假判定
 ```
+
+判定内核的设计与修复记录见 **[DESIGN.md 第十节](DESIGN.md)**，
+判定可靠性复核报告见 **[2026-08-11_判定可靠性review.md](2026-08-11_判定可靠性review.md)**。
 
 ## 我的任务
 
