@@ -8,8 +8,8 @@
 
 ```bash
 python run_demo.py                   # 端到端：mock感知 -> World Model -> 契约 -> Judge evidence
-python run_camera_replay.py          # 离线回放：外部YOLO检测帧 -> 像素到地面 -> World Model
-    --detections scenes/tennis_detection_replay.jsonl
+python run_camera_replay.py \
+    --detections scenes/tennis_detection_replay.jsonl \
     --calibration configs/overhead_camera.example.json
 python -m pytest tests/ -q           # 72 passed
 python tools/false_verdict_probe.py  # 判定可靠性探针：16 PASS / 0 FAIL / 1 已知边界
