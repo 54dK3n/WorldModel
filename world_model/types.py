@@ -51,7 +51,7 @@ class Detection:
     z: float
     confidence: float
     radius_cm: float = 5.0
-    bbox: Optional[Tuple[int, int, int, int]] = None   # 像素框 xyxy，进 evidence
+    bbox: Optional[Tuple[float, float, float, float]] = None   # 像素框 xyxy，进 evidence
     frame_id: Optional[str] = None                     # 帧引用，进 evidence
     source: str = "mock"
     timestamp: float = 0.0
@@ -81,7 +81,7 @@ class TrackedObject:
     pose_uncertainty_cm: float = 0.0
 
     source: str = "mock"
-    last_bbox: Optional[Tuple[int, int, int, int]] = None
+    last_bbox: Optional[Tuple[float, float, float, float]] = None
     last_frame_id: Optional[str] = None
 
     def age(self, now: float) -> float:

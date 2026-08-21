@@ -8,36 +8,49 @@
 
 ```bash
 python run_demo.py                   # 端到端：mock感知 -> World Model -> 契约 -> Judge evidence
-python -m pytest tests/ -q           # 49 passed
+python run_camera_replay.py          # 离线回放：外部YOLO检测帧 -> 像素到地面 -> World Model
+    --detections scenes/tennis_detection_replay.jsonl
+    --calibration configs/overhead_camera.example.json
+python -m pytest tests/ -q           # 72 passed
 python tools/false_verdict_probe.py  # 判定可靠性探针：16 PASS / 0 FAIL / 1 已知边界
 ```
 
-零外部依赖（仅 pytest 用于测试）。
+零外部依赖（仅 pytest 用于测试）。外部 YOLO 检测接入与离线回放说明见
+**[docs/CAMERA_REPLAY.md](docs/CAMERA_REPLAY.md)**。
 
 ## 目录
 
 ```
 wm_kit/
 ├── DESIGN.md                     方案总结、边界、待确认清单
+├── docs/CAMERA_REPLAY.md         外部检测接入/回放/标定参数说明
+├── run_camera_replay.py          离线回放演示
+├── configs/
+│   └── overhead_camera.example.json  测试用途标定（非真实标定）
 ├── world_model/
 │   ├── types.py                  Detection / TrackedObject / RobotPose / 状态机
+│   ├── raw.py                    RawDetection / DetectionFrame 检测输入契约
+│   ├── calibration.py            CameraCalibration 标定参数
 │   ├── aliases.py                #5 别名表
 │   ├── association.py            #3 关联：代价矩阵 + 门控 + 贪心
 │   ├── decay.py                  #4 时效：FOV 判断 + 双模衰减
 │   ├── core.py                   WorldModel 主体（update/get_scene/get_object/snapshot）
-│   ├── adapters.py               导出 scene_observations 契约
+│   ├── adapters.py               导出 scene_observations 契约 + YOLO bbox 适配
 │   └── providers/
-│       ├── base.py               provider 抽象 + 相机provider桩（#1检测 #2地平面求交）
+│       ├── base.py               provider 抽象 + CameraDetectorProvider
 │       └── mock.py               读 JSON 场景序列，零硬件
 ├── judge/
 │   ├── evidence.py               填 evidence 字段：身份锁定 + 前置条件 + reason code
 │   └── providers.py              WorldModelDiff(已实现) / RewardClassifier(待填) / YoloOverlap(备选)
-├── scenes/demo_scene.json        覆盖四类验收场景的 mock 观测序列
+├── scenes/
+│   ├── demo_scene.json           覆盖四类验收场景的 mock 观测序列
+│   └── tennis_detection_replay.jsonl  外部YOLO检测帧回放（球/桶/漏检/遮挡/误检）
 ├── tools/false_verdict_probe.py  判定可靠性探针：对抗场景，查虚假判定
 ├── logs/                         各次运行的输出记录
 └── tests/
     ├── test_world_model.py       20 条：信念维护的不变式
-    └── test_judge.py             29 条：每条对应一个曾经的虚假判定
+    ├── test_judge.py             29 条：每条对应一个曾经的虚假判定
+    └── test_camera_provider.py   23 条：相机provider/像素投影/输入契约/回放
 ```
 
 判定内核的设计与修复记录见 **[DESIGN.md 第十节](DESIGN.md)**，
