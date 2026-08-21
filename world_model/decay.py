@@ -125,7 +125,9 @@ def apply_decay(
     try:
         in_fov = bool(visibility.is_visible(obj.x, obj.z, pose))
     except Exception:
-        in_fov = False
+        # 可见性未知时按“在视野内但没检测到”处理（快衰减），
+        # 不允许以未知为借口长期保留对象。
+        in_fov = True
     if in_fov:
         obj.miss_count += 1   # 只在视野内的漏检才算 miss
 
