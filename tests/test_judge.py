@@ -20,22 +20,30 @@ from judge.evidence import (Caveat, EvidencePolicy, Reason,
                             build_containment_evidence, build_grasp_evidence)
 from judge.providers import (JudgeContext, JudgeRequest, WorldModelDiffProvider,
                              get_provider)
-from world_model import Detection, RobotPose, WorldModel
+from world_model import Detection, FrameQuality, RobotPose, WorldModel
 from world_model.types import ObjectState, TrackedObject
 
 
 def det(cls="sports ball", x=0.0, z=1.0, conf=0.95, r=3.3):
-    return Detection(class_name=cls, x=x, z=z, confidence=conf, radius_cm=r,
-                     bbox=(0, 0, 10, 10), frame_id="f", source="test")
+    return Detection(
+        class_name=cls, x=x, z=z, confidence=conf, radius_cm=r,
+        size_source="instance_config", size_trusted=True,
+        bbox=(0, 0, 10, 10), frame_id="f", source="test",
+        frame_quality=FrameQuality(frame_id="f", degraded=False,
+                                   calibration_trusted=True),
+    )
 
 
 def obj(name, x, z, conf, r=3.3, last_seen=0.0, state=ObjectState.CONFIRMED,
         oid=None, unc=1.0):
     return TrackedObject(
         obj_id=oid or f"{name}_900", name=name, x=x, z=z, radius_cm=r,
+        size_source="instance_config", size_trusted=True,
         confidence=conf, first_seen=0.0, last_seen=last_seen, last_updated=last_seen,
         hit_count=5, state=state, pose_uncertainty_cm=unc,
         source="test", last_bbox=(0, 0, 10, 10), last_frame_id="f",
+        last_frame_quality=FrameQuality(frame_id="f", degraded=False,
+                                        calibration_trusted=True),
     )
 
 
@@ -56,6 +64,15 @@ def put_scene(new_conf=0.88, gap=2.0):
 
 def judge(before, after, now, ctx=None, gripper_closed=False,
           task="put_ball_in_basket"):
+    if ctx is None:
+        ctx = JudgeContext()
+    # 合成单元测试的 evidence 默认是完整且可信的；严格边界场景在
+    # test_strict_safety.py 中单独覆盖。
+    if ctx.calibration_trusted is False:
+        ctx.calibration_trusted = True
+    if ctx.frame_quality is None:
+        ctx.frame_quality = FrameQuality(frame_id="f", degraded=False,
+                                         calibration_trusted=True)
     return WorldModelDiffProvider().judge(
         JudgeRequest(task=task, target="ball", container="basket",
                      now=now, gripper_closed=gripper_closed),
@@ -202,7 +219,12 @@ def test_empty_grasp_with_visible_ball_is_not_success():
 def test_grasp_survives_self_occlusion():
     """抓在手里最容易被夹爪自遮挡，硬卡 age<1s 会稳定误杀真成功。"""
     after = [obj("ball", 0.21, 0.61, 0.9, last_seen=8.8)]
-    ev = build_grasp_evidence(after, "ball", True, 10.0, gripper_pose=(0.2, 0.6))
+    ev = build_grasp_evidence(
+        after, "ball", True, 10.0, gripper_pose=(0.2, 0.6),
+        calibration_trusted=True,
+        frame_quality=FrameQuality(frame_id="f", degraded=False,
+                                   calibration_trusted=True),
+    )
     assert ev["satisfied"] is True
     assert ev["staleness_s"] == pytest.approx(1.2)
 

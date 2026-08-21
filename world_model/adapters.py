@@ -18,14 +18,15 @@ from .raw import RawDetection
 from .types import Detection, TrackedObject
 
 
-def _iso(ts: float, time_origin: float = 0.0) -> str:
-    """内部时刻 -> ISO8601。
+def _iso(ts: float, time_origin: float | None) -> object:
+    """内部时刻 -> ISO8601 或相对秒。
 
-    内部时间是"场景相对秒"（回放/mock 从 0 开始），不是 Unix 时间。
-    time_origin 是相对时刻 0.0 对应的 Unix 时间；不传就默认内部时间已经是
-    Unix 时间。原来这里直接把相对秒当纪元格式化，导出的时间戳全是
-    1970-01-01T00:00:0Xz，下游拿它算陈旧度会得到 56 年。
+    time_origin 是相对时刻 0.0 对应的 Unix 时间。
+    time_origin 为 None 时明确表示"仅相对时间"，返回 float 相对秒，
+    绝不把相对秒格式化成 1970 纪元。
     """
+    if time_origin is None:
+        return float(ts)
     return datetime.fromtimestamp(time_origin + ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -83,7 +84,7 @@ def letterbox_bbox_to_original(
 
 
 
-def to_scene_observation(obj: TrackedObject, time_origin: float = 0.0) -> Dict:
+def to_scene_observation(obj: TrackedObject, time_origin: float | None = None) -> Dict:
     """宋红的 scene_observations 契约。字段严格对齐，不多不少。
 
     待确认：契约里没有 id 也没有 state，同名多实例（干扰物、断轨残留）
@@ -101,7 +102,7 @@ def to_scene_observation(obj: TrackedObject, time_origin: float = 0.0) -> Dict:
     }
 
 
-def to_scene_observations(objs: Sequence[TrackedObject], time_origin: float = 0.0) -> List[Dict]:
+def to_scene_observations(objs: Sequence[TrackedObject], time_origin: float | None = None) -> List[Dict]:
     return [to_scene_observation(o, time_origin) for o in objs]
 
 
@@ -135,5 +136,15 @@ def to_debug_dict(obj: TrackedObject) -> Dict:
         "pose_uncertainty_cm": obj.pose_uncertainty_cm,
         "last_bbox": list(obj.last_bbox) if obj.last_bbox else None,
         "last_frame_id": obj.last_frame_id,
+        "last_frame_quality": {
+            "frame_id": obj.last_frame_quality.frame_id,
+            "degraded": obj.last_frame_quality.degraded,
+            "frames_skipped": obj.last_frame_quality.frames_skipped,
+            "detections_skipped": obj.last_frame_quality.detections_skipped,
+            "calibration_trusted": obj.last_frame_quality.calibration_trusted,
+            "coordinate_frame": obj.last_frame_quality.coordinate_frame,
+        } if obj.last_frame_quality else None,
+        "size_source": obj.size_source,
+        "size_trusted": obj.size_trusted,
         "source": obj.source,
     }

@@ -12,11 +12,56 @@ import math
 from dataclasses import dataclass
 from typing import List, Tuple
 
+TIMESTAMP_TOLERANCE_S = 1e-6
+
 
 def _require_finite(value: float, label: str) -> float:
     if not math.isfinite(value):
         raise ValueError(f"{label} 必须是有限数值，收到 {value!r}")
     return value
+
+
+def _validate_bbox(x1: float, y1: float, x2: float, y2: float) -> Tuple[float, float, float, float]:
+    for name, v in (("x1", x1), ("y1", y1), ("x2", x2), ("y2", y2)):
+        _require_finite(v, f"bbox.{name}")
+    if x2 <= x1:
+        raise ValueError(f"bbox 倒置或零面积：x2={x2!r} 必须大于 x1={x1!r}")
+    if y2 <= y1:
+        raise ValueError(f"bbox 倒置或零面积：y2={y2!r} 必须大于 y1={y1!r}")
+    if x1 < 0 or y1 < 0:
+        raise ValueError(
+            f"bbox 不能出现负坐标（原始图像左上角为原点）：({x1}, {y1}, {x2}, {y2})"
+        )
+    return x1, y1, x2, y2
+
+
+def validate_detection_for_frame(
+    det: "RawDetection",
+    frame_id: str,
+    timestamp: float,
+    image_width: int,
+    image_height: int,
+) -> None:
+    """统一检测级与帧级边界检查。DetectionFrame 和 provider 都走这里。"""
+    if det.frame_id != frame_id:
+        raise ValueError(
+            f"DetectionFrame.frame_id={frame_id!r} 与 RawDetection.frame_id="
+            f"{det.frame_id!r} 不一致"
+        )
+    if abs(det.timestamp - timestamp) > TIMESTAMP_TOLERANCE_S:
+        raise ValueError(
+            f"DetectionFrame.timestamp={timestamp!r} 与 RawDetection.timestamp="
+            f"{det.timestamp!r} 不一致（容差 {TIMESTAMP_TOLERANCE_S}s）"
+        )
+    x1, y1, x2, y2 = det.bbox
+    if x2 > float(image_width):
+        raise ValueError(
+            f"bbox 越界：x2={x2!r} > image_width={image_width}（({x1}, {y1}, {x2}, {y2})）"
+        )
+    if y2 > float(image_height):
+        raise ValueError(
+            f"bbox 越界：y2={y2!r} > image_height={image_height}（({x1}, {y1}, {x2}, {y2})）"
+        )
 
 
 @dataclass
@@ -47,18 +92,7 @@ class RawDetection:
 
         if not isinstance(self.bbox, (tuple, list)) or len(self.bbox) != 4:
             raise ValueError(f"bbox 必须是 (x1, y1, x2, y2) 四元组，收到 {self.bbox!r}")
-        x1, y1, x2, y2 = (float(v) for v in self.bbox)
-        for name, v in (("x1", x1), ("y1", y1), ("x2", x2), ("y2", y2)):
-            _require_finite(v, f"bbox.{name}")
-        if x2 <= x1:
-            raise ValueError(f"bbox 倒置或零面积：x2={x2!r} 必须大于 x1={x1!r}")
-        if y2 <= y1:
-            raise ValueError(f"bbox 倒置或零面积：y2={y2!r} 必须大于 y1={y1!r}")
-        if x1 < 0 or y1 < 0:
-            raise ValueError(
-                f"bbox 不能出现负坐标（原始图像左上角为原点）：({x1}, {y1}, {x2}, {y2})"
-            )
-        self.bbox = (x1, y1, x2, y2)
+        self.bbox = _validate_bbox(*(float(v) for v in self.bbox))
 
         self.timestamp = _require_finite(float(self.timestamp), "timestamp")
         if not isinstance(self.frame_id, str) or not self.frame_id.strip():
@@ -99,25 +133,13 @@ class DetectionFrame:
         for det in self.detections:
             if not isinstance(det, RawDetection):
                 raise ValueError(f"detections 每项必须是 RawDetection，收到 {det!r}")
-            if det.frame_id != self.frame_id:
-                raise ValueError(
-                    f"DetectionFrame.frame_id={self.frame_id!r} 与 RawDetection.frame_id="
-                    f"{det.frame_id!r} 不一致"
-                )
-            if det.timestamp != self.timestamp:
-                raise ValueError(
-                    f"DetectionFrame.timestamp={self.timestamp!r} 与 RawDetection.timestamp="
-                    f"{det.timestamp!r} 不一致"
-                )
-            x1, y1, x2, y2 = det.bbox
-            if x2 > float(self.image_width):
-                raise ValueError(
-                    f"bbox 越界：x2={x2!r} > image_width={self.image_width}（({x1}, {y1}, {x2}, {y2})）"
-                )
-            if y2 > float(self.image_height):
-                raise ValueError(
-                    f"bbox 越界：y2={y2!r} > image_height={self.image_height}（({x1}, {y1}, {x2}, {y2})）"
-                )
+            validate_detection_for_frame(
+                det,
+                self.frame_id,
+                self.timestamp,
+                self.image_width,
+                self.image_height,
+            )
 
     def to_raw_detections(self) -> List[RawDetection]:
         """拆成 provider 可直接消费的原始检测列表。"""

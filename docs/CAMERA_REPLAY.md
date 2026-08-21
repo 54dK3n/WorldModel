@@ -90,7 +90,13 @@ v = y2
 
 单位：米。
 
-异常处理：射线与平面平行、交点在相机后方、或投影结果非有限值时，`pixel_to_ground` 抛 `ValueError`；`stream()` 逐条检测捕获并打印 warning 后跳过该条检测，不整体崩溃。
+异常处理：射线与平面平行、交点在相机后方、非有限值、小于最小量程、超过最大量程时，
+`pixel_to_ground` 抛 `ValueError`；`stream()` 逐条检测捕获并打印 warning 后只跳过
+该条检测，不整体崩溃。被跳过的检测计入 `detections_skipped`，并标记该帧为
+degraded（严格 Judge 不使用 degraded 帧给出成功）。
+
+`pixel_to_ground` 返回世界坐标：相机/机器人局部坐标会通过当前 `RobotPose`
+转换到世界坐标；`pose=None` 时等价于机器人位于世界原点。
 
 ## 4. 相机标定参数
 
@@ -110,6 +116,8 @@ JSON 字段与 `world_model/calibration.py::CameraCalibration` 一一对应：
   "camera_x_m": 0.0,
   "camera_z_m": 0.0,
   "ground_plane_height_m": 0.0,
+  "min_ground_range_m": 0.15,
+  "max_ground_range_m": 4.0,
   "source": "test",
   "is_real_calibration": false
 }
@@ -126,6 +134,7 @@ JSON 字段与 `world_model/calibration.py::CameraCalibration` 一一对应：
 - 相机俯仰角（pitch，正方向见上）
 - 相机相对机器人坐标 `camera_x_m` / `camera_z_m`
 - 地面或桌面平面高度 `ground_plane_height_m`
+- 有效投影范围 `min_ground_range_m` / `max_ground_range_m`
 
 ## 5. 离线回放运行方式
 
@@ -150,7 +159,8 @@ python run_camera_replay.py \
 - 球短时遮挡（两帧，对象不删除）
 - 球大位移移动（保持原 obj_id）
 - 桶保持静止
-- 一个低置信度误检（不 CONFIRMED，随后缓慢衰减）
+- 一个低置信度误检（不 CONFIRMED，随后衰减）
+- 每条检测显式声明 `radius_cm` / `size_source` / `size_trusted`，不再静默使用 5cm
 
 ## 6. 时间戳语义
 
@@ -159,9 +169,24 @@ python run_camera_replay.py \
 - JSON 顶层可写 `{"time_origin": 123, "frames": [...]}`。
 - JSONL 第一行可写 `{"time_origin": 123}` 作为 meta 行；也可通过 `--time-origin` 传入。
 - `scene_observations` 输出 ISO8601 UTC（由 `time_origin + last_seen` 计算），
-  避免把相对秒直接当 1970 纪元格式化。
+  避免把相对秒直接当 1970 纪元格式化；缺少 `time_origin` 的严格回放直接失败，
+  只有显式 `--relative-time-only` 才输出相对秒。
 
-## 7. 当前结论与限制
+## 7. 尺寸证据与严格判定
+
+尺寸来源定义在 `world_model/types.py` 与 `world_model/size_policy.py`：
+
+| size_source | 可信 | 说明 |
+|-------------|------|------|
+| `detector` | 是 | 检测器显式输出物理尺寸 |
+| `instance_config` | 是 | 可信对象实例配置（球 3.3cm、桶 15cm） |
+| `bbox_heuristic` | 否 | 根据标定和 bbox 估算 |
+| `default` / `unknown` | 否 | 类别默认值或缺失 |
+
+严格 containment 判定要求目标和容器尺寸均可信，否则返回
+`missing_size_evidence` 或 `untrusted_size_evidence`，绝不猜测成功。
+
+## 8. 当前结论与限制
 
 - 当前验证基于**录制/合成的检测帧回放**，使用的是**测试用途标定参数**，
   不是真实图像和真实相机标定。
@@ -169,13 +194,17 @@ python run_camera_replay.py \
   JSON/JSONL 回放；实时相机与板端 TPU 是独立 adapter，未在本轮接入。
 - 尚未获得真实 fx/fy/cx/cy、相机外参、桌面高度等参数。
 - 物体定位依赖“检测框底边中点在地面/桌面平面上”的假设；悬空物体会有系统误差。
-- `FovConfig` 仍使用默认水平 FOV 70°/4m 经验值，真实标定完成后应替换。
+- `FovConfig` 仍保留为未标定时的兜底模型；相机投影产生的对象应使用
+  `WorldModel(visibility=calibration)` 的统一可见性模型（内参/俯仰角/图像尺寸/有效量程）。
+- 测试标定会被标记 `untrusted_calibration`，严格 Judge 不会据其返回成功。
 
-## 8. 如何接入 chaofeng 的 Agent/Judge
+## 9. 如何接入 chaofeng 的 Agent/Judge
 
 1. 在 chaofeng 侧构造 `CameraDetectorProvider`（标定文件 + 回放文件或未来实时相机 adapter）。
-2. 用 `provider.time_origin` 构造 `WorldModel(time_origin=...)`，保证 `scene_observations` 时间戳正确。
+2. 用 `provider.time_origin` 构造 `WorldModel(time_origin=..., visibility=provider.calibration)`，
+   保证时间戳正确并启用统一相机可见性模型。
 3. 对每帧 `(ts, pose, dets)` 调用 `wm.update(dets, pose, now=ts)`。
 4. Agent 动作前调用 `before = wm.snapshot()`，动作后调用 `after = wm.snapshot()`。
-5. 调用 `WorldModelDiffProvider().judge(req, before, after, ctx=JudgeContext(target_id=...))`。
+5. 调用 `WorldModelDiffProvider().judge(req, before, after, ctx=JudgeContext(target_id=..., calibration_trusted=..., frame_quality=...))`。
+   测试标定与降级帧不会返回成功；缺失任何证据都会以 reason code 失败。
 6. 外层循环用 try/except 包住单帧 update，provider 异常不应导致 WorldModel 状态丢失。

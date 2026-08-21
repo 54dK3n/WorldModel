@@ -42,6 +42,7 @@ def make_provider():
 
 def make_replay_provider(tmp_path, frames, **kwargs):
     """带测试标定的回放 provider。"""
+    kwargs.setdefault("time_origin", 1786417200.0)
     return CameraDetectorProvider(
         calibration=make_provider().calibration,
         replay_path=write_jsonl(tmp_path, frames, **kwargs),
@@ -49,7 +50,7 @@ def make_replay_provider(tmp_path, frames, **kwargs):
     )
 
 
-def write_jsonl(tmp_path, frames, time_origin=None):
+def write_jsonl(tmp_path, frames, time_origin=1786417200.0):
     path = tmp_path / "replay.jsonl"
     lines = []
     if time_origin is not None:
@@ -136,6 +137,19 @@ def test_out_of_bounds_bbox_rejected_by_frame():
             image_height=9,
             detections=[RawDetection("ball", 0.9, (1, 1, 10, 10), "f", 0.0)],
         )
+
+
+def test_replay_resolution_must_match_calibration(tmp_path, caplog):
+    p = make_replay_provider(
+        tmp_path,
+        [frame("wrong-size", 0.0, [], w=1280, h=720)],
+    )
+    with caplog.at_level("WARNING"):
+        assert list(p.stream()) == []
+    assert p.frames_loaded == 1
+    assert p.frames_yielded == 0
+    assert p.frames_skipped == 1
+    assert "回放分辨率与标定不一致" in caplog.text
 
 
 # ------------------------------------------------------------------ 6. 别名映射
@@ -276,21 +290,27 @@ def test_frame_id_bbox_timestamp_enter_evidence(tmp_path):
 # ------------------------------------------------------------------ 13. 相对时间与 Unix 时间
 
 def test_relative_time_and_unix_time_are_not_mixed(tmp_path):
+    trusted_ball = {
+        "class_name": "tennis_ball", "confidence": 0.94,
+        "bbox": ball_bbox(320), "radius_cm": 3.3,
+        "size_source": "instance_config", "size_trusted": True,
+    }
     frames = [
-        frame("f9", 9.0, [
-            {"class_name": "tennis_ball", "confidence": 0.94, "bbox": ball_bbox(320)},
-        ]),
+        frame("f7", 7.0, [trusted_ball]),
+        frame("f8", 8.0, [trusted_ball]),
+        frame("f9", 9.0, [trusted_ball]),
     ]
     p = make_replay_provider(tmp_path, frames, time_origin=1786417200.0)
 
     wm = WorldModel(time_origin=1786417200.0)
     for ts, pose, dets in p.stream():
-        assert ts == 9.0, "provider 内部时钟必须是相对秒，不是 Unix 时间"
-        assert dets[0].timestamp == 9.0
+        assert ts in (7.0, 8.0, 9.0), "provider 内部时钟必须是相对秒，不是 Unix 时间"
+        assert dets[0].timestamp == ts
         wm.update(dets, pose, now=ts)
 
-    obs = wm.to_contract()[0]
-    assert obs["timestamp"] == "2026-08-11T03:00:09Z"
+    obs = wm.to_contract(now=9.0)
+    assert len(obs) == 1
+    assert obs[0]["timestamp"] == "2026-08-11T03:00:09Z"
 
 
 # ------------------------------------------------------------------ 14. 外部 YOLO 适配工具

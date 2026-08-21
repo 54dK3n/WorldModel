@@ -11,6 +11,8 @@
   "camera_x_m": 0.0,
   "camera_z_m": 0.0,
   "ground_plane_height_m": 0.0,
+  "min_ground_range_m": 0.15,
+  "max_ground_range_m": 4.0,
   "source": "test",
   "is_real_calibration": false
 }

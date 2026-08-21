@@ -7,12 +7,13 @@
 ## 跑起来
 
 ```bash
-python run_demo.py                   # 端到端：mock感知 -> World Model -> 契约 -> Judge evidence
-python run_camera_replay.py \
+python3 run_demo.py                  # 端到端：mock感知 -> World Model -> 契约 -> Judge evidence
+python3 run_camera_replay.py \
     --detections scenes/tennis_detection_replay.jsonl \
-    --calibration configs/overhead_camera.example.json
-python -m pytest tests/ -q           # 72 passed
-python tools/false_verdict_probe.py  # 判定可靠性探针：16 PASS / 0 FAIL / 1 已知边界
+    --calibration configs/overhead_camera.example.json \
+    --log-file logs/camera_replay.log
+python3 -m pytest tests/ -q          # 107 passed
+python3 tools/false_verdict_probe.py # 判定可靠性探针：16 PASS / 0 FAIL / 1 已知边界
 ```
 
 零外部依赖（仅 pytest 用于测试）。外部 YOLO 检测接入与离线回放说明见
@@ -30,10 +31,11 @@ wm_kit/
 ├── world_model/
 │   ├── types.py                  Detection / TrackedObject / RobotPose / 状态机
 │   ├── raw.py                    RawDetection / DetectionFrame 检测输入契约
-│   ├── calibration.py            CameraCalibration 标定参数
+│   ├── calibration.py            CameraCalibration 标定参数 + 统一可见性模型
+│   ├── size_policy.py            尺寸证据策略（detector/instance/bbox/default）
 │   ├── aliases.py                #5 别名表
 │   ├── association.py            #3 关联：代价矩阵 + 门控 + 贪心
-│   ├── decay.py                  #4 时效：FOV 判断 + 双模衰减
+│   ├── decay.py                  #4 时效：统一可见性模型 + 双模衰减
 │   ├── core.py                   WorldModel 主体（update/get_scene/get_object/snapshot）
 │   ├── adapters.py               导出 scene_observations 契约 + YOLO bbox 适配
 │   └── providers/
@@ -50,7 +52,8 @@ wm_kit/
 └── tests/
     ├── test_world_model.py       20 条：信念维护的不变式
     ├── test_judge.py             29 条：每条对应一个曾经的虚假判定
-    └── test_camera_provider.py   23 条：相机provider/像素投影/输入契约/回放
+    ├── test_camera_provider.py   24 条：相机provider/像素投影/输入契约/回放
+    └── test_strict_safety.py     34 条：严格失败关闭/尺寸证据/边界/对抗不变量
 ```
 
 判定内核的设计与修复记录见 **[DESIGN.md 第十节](DESIGN.md)**，

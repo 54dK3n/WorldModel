@@ -9,7 +9,12 @@ import json
 from pathlib import Path
 from typing import Iterator, List, Tuple
 
-from ..types import Detection, RobotPose
+from ..types import (
+    SIZE_SOURCE_DEFAULT,
+    SIZE_SOURCE_INSTANCE_CONFIG,
+    Detection,
+    RobotPose,
+)
 from .base import PerceptionProvider
 
 
@@ -20,7 +25,8 @@ class MockProvider(PerceptionProvider):
         self.frames = self.scene["frames"]
         # 场景相对时刻 0.0 对应的 Unix 时间。回放数据的 t 是相对秒，
         # 不声明原点就没法导出正确的 ISO 时间戳。
-        self.time_origin: float = float(self.scene.get("time_origin", 0.0))
+        origin = self.scene.get("time_origin")
+        self.time_origin: float | None = float(origin) if origin is not None else None
 
     def stream(self) -> Iterator[Tuple[float, RobotPose, List[Detection]]]:
         for frame in self.frames:
@@ -32,18 +38,29 @@ class MockProvider(PerceptionProvider):
                 yaw_rad=p.get("yaw_rad", 0.0),
                 pose_uncertainty_cm=p.get("pose_uncertainty_cm", 0.0),
             )
-            dets = [
-                Detection(
-                    class_name=d["class_name"],
-                    x=d["x"],
-                    z=d["z"],
-                    confidence=d.get("confidence", 0.9),
-                    radius_cm=d.get("radius_cm", 5.0),
-                    bbox=tuple(d["bbox"]) if d.get("bbox") else None,
-                    frame_id=frame.get("frame_id"),
-                    source=d.get("source", "mock"),
-                    timestamp=ts,
+            dets = []
+            for d in frame.get("detections", []):
+                radius_cm = d.get("radius_cm")
+                if radius_cm is not None:
+                    size_source = d.get("size_source", SIZE_SOURCE_INSTANCE_CONFIG)
+                    size_trusted = bool(d.get("size_trusted", True))
+                else:
+                    radius_cm = 5.0
+                    size_source = SIZE_SOURCE_DEFAULT
+                    size_trusted = False
+                dets.append(
+                    Detection(
+                        class_name=d["class_name"],
+                        x=d["x"],
+                        z=d["z"],
+                        confidence=d.get("confidence", 0.9),
+                        radius_cm=float(radius_cm),
+                        size_source=size_source,
+                        size_trusted=size_trusted,
+                        bbox=tuple(d["bbox"]) if d.get("bbox") else None,
+                        frame_id=frame.get("frame_id"),
+                        source=d.get("source", "mock"),
+                        timestamp=ts,
+                    )
                 )
-                for d in frame.get("detections", [])
-            ]
             yield ts, pose, dets

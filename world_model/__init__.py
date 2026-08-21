@@ -1,5 +1,11 @@
 from .core import WorldModel
-from .types import Detection, RobotPose, TrackedObject, ObjectState
+from .types import (
+    Detection,
+    FrameQuality,
+    ObjectState,
+    RobotPose,
+    TrackedObject,
+)
 from .aliases import AliasTable
 from .raw import RawDetection, DetectionFrame
 from .calibration import CameraCalibration, load_camera_calibration
@@ -11,7 +17,7 @@ from .adapters import (
 )
 
 __all__ = [
-    "WorldModel", "Detection", "RobotPose", "TrackedObject", "ObjectState",
+    "WorldModel", "Detection", "FrameQuality", "RobotPose", "TrackedObject", "ObjectState",
     "AliasTable", "RawDetection", "DetectionFrame",
     "CameraCalibration", "load_camera_calibration",
     "to_scene_observations", "to_scene_observation",

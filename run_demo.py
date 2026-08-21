@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 
 from judge.providers import JudgeContext, JudgeRequest, WorldModelDiffProvider
-from world_model import WorldModel
+from world_model import FrameQuality, WorldModel
 from world_model.decay import is_in_fov
 from world_model.providers import MockProvider
 
@@ -55,7 +55,13 @@ def main() -> None:
         before=before_snapshot or [],
         after=wm.snapshot(),
         # 判定主语用 id 锁定；契约里没有这个字段，走 JudgeContext 旁路传。
-        ctx=JudgeContext(target_id=target_id),
+        ctx=JudgeContext(
+            target_id=target_id,
+            calibration_trusted=True,
+            frame_quality=FrameQuality(
+                frame_id="demo", degraded=False, calibration_trusted=True,
+            ),
+        ),
     )
     print(f"success = {resp.success}")
     print(f"detail  = {resp.detail}")

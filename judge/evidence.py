@@ -32,7 +32,15 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from world_model.adapters import to_debug_dict
-from world_model.types import ObjectState, TrackedObject
+from world_model.types import (
+    COORDINATE_FRAME_WORLD,
+    SIZE_SOURCE_BBOX_HEURISTIC,
+    SIZE_SOURCE_DEFAULT,
+    SIZE_SOURCE_UNKNOWN,
+    FrameQuality,
+    ObjectState,
+    TrackedObject,
+)
 
 
 # ------------------------------------------------------------------ 原因码
@@ -55,6 +63,12 @@ class Reason:
     GRIPPER_OPEN = "gripper_open"
     NO_GRIPPER_POSE = "no_gripper_pose"
     OUT_OF_REACH = "out_of_reach"
+    MISSING_SIZE_EVIDENCE = "missing_size_evidence"
+    UNTRUSTED_SIZE_EVIDENCE = "untrusted_size_evidence"
+    UNTRUSTED_CALIBRATION = "untrusted_calibration"
+    DEGRADED_FRAME_EVIDENCE = "degraded_frame_evidence"
+    MISSING_FRAME_QUALITY = "missing_frame_quality"
+    UNKNOWN_COORDINATE_FRAME = "unknown_coordinate_frame"
 
 
 # 非阻断提示：判定照给，但下游应知道这条判定的能力边界
@@ -73,6 +87,10 @@ class EvidencePolicy:
     max_staleness_s: float = 1.0        # 证据最多允许多旧
     require_state_change: bool = True   # 必须 before 不满足 -> after 满足
     fully_inside: bool = True           # 阈值扣掉目标半径，要求目标整体进入投影
+    require_size_trusted: bool = True   # 严格模式：尺寸证据必须可信
+    require_calibration_trusted: bool = True  # 严格模式：标定必须可信
+    require_frame_quality: bool = True  # 严格模式：必须有完整帧质量证据
+    require_coordinate_frame: bool = True  # 严格模式：坐标系必须明确
     grasp_reach_m: float = 0.25         # 目标与夹爪的最大距离
     grasp_grace_s: float = 1.5          # 抓在手里会自遮挡，视觉确认给的宽限窗口
 
@@ -116,7 +134,7 @@ def resolve_pair(
     if obj_id:
         b = _by_id(before, obj_id)
         a = _by_id(after, obj_id)
-        if a is None:
+        if b is None or a is None:
             reasons.append(Reason.IDENTITY_BROKEN)
         return b, a, reasons
 
@@ -160,6 +178,34 @@ def check_quality(
     return reasons
 
 
+def _check_size_evidence(obj: Optional[TrackedObject]) -> List[str]:
+    if obj is None or obj.size_trusted:
+        return []
+    if obj.radius_cm <= 0 or obj.size_source == SIZE_SOURCE_UNKNOWN:
+        return [Reason.MISSING_SIZE_EVIDENCE]
+    return [Reason.UNTRUSTED_SIZE_EVIDENCE]
+
+
+def _check_evidence_preconditions(
+    policy: EvidencePolicy,
+    calibration_trusted: bool,
+    frame_quality: Optional[FrameQuality],
+    coordinate_frame: Optional[str],
+) -> List[str]:
+    reasons: List[str] = []
+    if policy.require_coordinate_frame and coordinate_frame != COORDINATE_FRAME_WORLD:
+        reasons.append(Reason.UNKNOWN_COORDINATE_FRAME)
+    if policy.require_calibration_trusted and not calibration_trusted:
+        reasons.append(Reason.UNTRUSTED_CALIBRATION)
+    if policy.require_frame_quality:
+        if frame_quality is None:
+            reasons.append(Reason.MISSING_FRAME_QUALITY)
+        elif (frame_quality.degraded or frame_quality.frames_skipped > 0
+              or frame_quality.detections_skipped > 0):
+            reasons.append(Reason.DEGRADED_FRAME_EVIDENCE)
+    return reasons
+
+
 def _threshold_cm(container: TrackedObject, target: TrackedObject,
                   policy: EvidencePolicy, override: Optional[float]) -> float:
     """判定阈值。
@@ -189,6 +235,9 @@ def build_containment_evidence(
     target_id: Optional[str] = None,
     container_id: Optional[str] = None,
     gripper_closed: bool = False,
+    calibration_trusted: bool = False,
+    frame_quality: Optional[FrameQuality] = None,
+    coordinate_frame: Optional[str] = COORDINATE_FRAME_WORLD,
 ) -> Dict:
     """判定"target 是否**被放进**了 container"，并给出完整证据链。
 
@@ -226,6 +275,11 @@ def build_containment_evidence(
 
     reasons += check_quality(t_after, now, policy, Reason.MISSING_TARGET)
     reasons += check_quality(c_after, now, policy, Reason.MISSING_CONTAINER)
+    reasons += _check_size_evidence(t_after)
+    reasons += _check_size_evidence(c_after)
+    reasons += _check_evidence_preconditions(
+        policy, calibration_trusted, frame_quality, coordinate_frame
+    )
 
     if t_after is None or c_after is None:
         _fill_warnings(evidence, target_name, container_name)
@@ -304,6 +358,12 @@ _REASON_TEXT = {
     Reason.GRIPPER_OPEN: "夹爪未闭合",
     Reason.NO_GRIPPER_POSE: "未提供夹爪位姿，无法确认目标在手里",
     Reason.OUT_OF_REACH: "目标不在夹爪可及范围内",
+    Reason.MISSING_SIZE_EVIDENCE: "尺寸证据缺失，无法计算可靠 containment 阈值",
+    Reason.UNTRUSTED_SIZE_EVIDENCE: "尺寸来自默认值或启发式估计，不可信，不得据其判定成功",
+    Reason.UNTRUSTED_CALIBRATION: "相机标定不可信（测试占位或未标定），不得据其判定成功",
+    Reason.DEGRADED_FRAME_EVIDENCE: "当前证据帧存在被跳过的检测，属于降级帧，不得据其判定成功",
+    Reason.MISSING_FRAME_QUALITY: "缺少帧质量证据，无法确认证据完整",
+    Reason.UNKNOWN_COORDINATE_FRAME: "坐标系不明确，无法可靠比较前后世界坐标",
 }
 
 
@@ -337,6 +397,9 @@ def build_grasp_evidence(
     gripper_pose: Optional[Tuple[float, float]] = None,
     policy: Optional[EvidencePolicy] = None,
     target_id: Optional[str] = None,
+    calibration_trusted: bool = False,
+    frame_quality: Optional[FrameQuality] = None,
+    coordinate_frame: Optional[str] = COORDINATE_FRAME_WORLD,
 ) -> Dict:
     """抓取确认需**双条件**：夹爪反馈 + 视觉确认。
 
@@ -366,6 +429,10 @@ def build_grasp_evidence(
         max_staleness_s=policy.grasp_grace_s,
     )
     reasons += check_quality(t, now, stale_policy, Reason.MISSING_TARGET)
+    reasons += _check_size_evidence(t)
+    reasons += _check_evidence_preconditions(
+        policy, calibration_trusted, frame_quality, coordinate_frame
+    )
 
     reach_cm: Optional[float] = None
     if t is not None:

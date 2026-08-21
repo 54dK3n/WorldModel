@@ -23,7 +23,7 @@ sys.path.insert(0, ".")
 from judge.evidence import EvidencePolicy, build_grasp_evidence
 from judge.providers import (JudgeContext, JudgeRequest, WorldModelDiffProvider,
                              get_provider)
-from world_model import Detection, RobotPose, WorldModel
+from world_model import Detection, FrameQuality, RobotPose, WorldModel
 from world_model.types import ObjectState, TrackedObject
 
 BAR = "=" * 78
@@ -47,8 +47,13 @@ def verify(cid: str, expected: bool, actual: bool, note: str, known: bool = Fals
 
 def det(cls: str, x: float, z: float, conf: float = 0.9, r: float = 3.3,
         frame: str = "probe", bbox=(0, 0, 10, 10)) -> Detection:
-    return Detection(class_name=cls, x=x, z=z, confidence=conf, radius_cm=r,
-                     bbox=bbox, frame_id=frame, source="probe")
+    return Detection(
+        class_name=cls, x=x, z=z, confidence=conf, radius_cm=r,
+        size_source="instance_config", size_trusted=True,
+        bbox=bbox, frame_id=frame, source="probe",
+        frame_quality=FrameQuality(frame_id=frame, degraded=False,
+                                   calibration_trusted=True),
+    )
 
 
 def obj(name: str, x: float, z: float, conf: float, r: float = 3.3,
@@ -56,9 +61,12 @@ def obj(name: str, x: float, z: float, conf: float, r: float = 3.3,
         oid: Optional[str] = None, unc: float = 1.0) -> TrackedObject:
     return TrackedObject(
         obj_id=oid or f"{name}_900", name=name, x=x, z=z, radius_cm=r,
+        size_source="instance_config", size_trusted=True,
         confidence=conf, first_seen=0.0, last_seen=last_seen, last_updated=last_seen,
         hit_count=5, state=state, pose_uncertainty_cm=unc,
         source="probe", last_bbox=(0, 0, 10, 10), last_frame_id="probe",
+        last_frame_quality=FrameQuality(frame_id="probe", degraded=False,
+                                        calibration_trusted=True),
     )
 
 
@@ -71,6 +79,14 @@ def show(objs: Sequence[TrackedObject], now: float, label: str = "快照") -> No
 
 def judge_put(before, after, now, target="ball", container="basket",
               ctx: Optional[JudgeContext] = None, gripper_closed: bool = False):
+    if ctx is None:
+        ctx = JudgeContext()
+    # 探针的合成对象默认带完整可信 evidence；严格边界场景在 strict tests 覆盖
+    if ctx.calibration_trusted is False:
+        ctx.calibration_trusted = True
+    if ctx.frame_quality is None:
+        ctx.frame_quality = FrameQuality(frame_id="probe", degraded=False,
+                                         calibration_trusted=True)
     return WorldModelDiffProvider().judge(
         JudgeRequest(task="put_ball_in_basket", target=target, container=container,
                      now=now, gripper_closed=gripper_closed),
@@ -217,20 +233,29 @@ def case_f_grasp():
     case("F", "抓取双条件：夹爪反馈 + 视觉确认")
     print(f"\n{SUB}\n  a) 夹爪空抓，球在 3 米外地上还能看见:")
     a1 = [obj("ball", 1.50, 3.00, 0.90, 3.3, last_seen=10.0)]
-    e1 = build_grasp_evidence(a1, "ball", True, 10.0, gripper_pose=(0.20, 0.60))
+    e1 = build_grasp_evidence(a1, "ball", True, 10.0, gripper_pose=(0.20, 0.60),
+                               calibration_trusted=True,
+                               frame_quality=FrameQuality(frame_id="probe", degraded=False,
+                                                          calibration_trusted=True))
     print(f"  visual_confirmed={e1['visual_confirmed']} reach={e1['reach_cm']}cm "
           f"(limit {e1['reach_limit_cm']}cm) satisfied={e1['satisfied']}")
     print(f"  reasons={e1['verdict']['reasons']}")
 
     print(f"\n{SUB}\n  b) 真抓住了，球被夹爪自遮挡 1.2s:")
     a2 = [obj("ball", 0.21, 0.61, 0.90, 3.3, last_seen=8.8)]
-    e2 = build_grasp_evidence(a2, "ball", True, 10.0, gripper_pose=(0.20, 0.60))
+    e2 = build_grasp_evidence(a2, "ball", True, 10.0, gripper_pose=(0.20, 0.60),
+                               calibration_trusted=True,
+                               frame_quality=FrameQuality(frame_id="probe", degraded=False,
+                                                          calibration_trusted=True))
     print(f"  visual_confirmed={e2['visual_confirmed']} reach={e2['reach_cm']}cm "
           f"staleness={e2['staleness_s']}s satisfied={e2['satisfied']}")
     print(f"  reasons={e2['verdict']['reasons']}")
 
     print(f"\n{SUB}\n  c) 没有夹爪位姿可用（外壳没提供）:")
-    e3 = build_grasp_evidence(a2, "ball", True, 10.0, gripper_pose=None)
+    e3 = build_grasp_evidence(a2, "ball", True, 10.0, gripper_pose=None,
+                               calibration_trusted=True,
+                               frame_quality=FrameQuality(frame_id="probe", degraded=False,
+                                                          calibration_trusted=True))
     print(f"  satisfied={e3['satisfied']} reasons={e3['verdict']['reasons']}")
 
     print("\n  a) 视觉那条现在要求目标在夹爪够得着的地方 -> out_of_reach，不再空抓报成功")

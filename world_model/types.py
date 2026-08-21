@@ -4,14 +4,32 @@
   Detection     — 单帧观测，provider 输出，无状态
   TrackedObject — 跨帧维护的对象信念，有状态（这才是 World Model 的"Model"）
 
+坐标约定（统一为世界坐标）：
+  Detection.x/z 和 TrackedObject.x/z 都是世界坐标（米）。
+  机器人本体/相机局部坐标只存在于 provider 内部，进入 WorldModel 前必须完成
+  RobotPose.to_world() 转换。yaw 旋转方向：yaw=+pi/2 表示机器人左转 90 度，
+  即世界朝向从 +z 转向 +x。
+
 对外契约（scene_observations）由 adapters.py 从 TrackedObject 导出，
 内部结构与对外契约解耦，契约变动只改 adapter。
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional, Tuple
+
+# 尺寸证据来源
+SIZE_SOURCE_DETECTOR = "detector"             # 检测器显式输出物理尺寸
+SIZE_SOURCE_INSTANCE_CONFIG = "instance_config"  # 可信对象实例配置
+SIZE_SOURCE_BBOX_HEURISTIC = "bbox_heuristic"    # 根据标定与 bbox 估算
+SIZE_SOURCE_DEFAULT = "default"               # 类别/代码默认值（不可信）
+SIZE_SOURCE_UNKNOWN = "unknown"               # 尺寸未知或缺失
+
+# 坐标帧
+COORDINATE_FRAME_WORLD = "world"
+COORDINATE_FRAME_ROBOT = "robot"
 
 
 class ObjectState(str, Enum):
@@ -28,6 +46,26 @@ class ObjectState(str, Enum):
 
 
 @dataclass
+class FrameQuality:
+    """一帧观测的质量标记。严格 Judge 只在 frame quality 完整时允许成功。"""
+
+    frame_id: Optional[str] = None
+    degraded: bool = False
+    frames_skipped: int = 0
+    detections_skipped: int = 0
+    calibration_trusted: bool = False
+    coordinate_frame: str = COORDINATE_FRAME_WORLD
+
+    def is_complete(self) -> bool:
+        return (
+            not self.degraded
+            and self.frames_skipped == 0
+            and self.detections_skipped == 0
+            and self.coordinate_frame == COORDINATE_FRAME_WORLD
+        )
+
+
+@dataclass
 class RobotPose:
     """机器人位姿。**由底盘/仿真器提供，World Model 只消费不计算。**
 
@@ -39,22 +77,48 @@ class RobotPose:
     z: float = 0.0
     yaw_rad: float = 0.0          # 朝向，用于 FOV 判断
     pose_uncertainty_cm: float = 0.0
-    # TODO(问宋红): 若坐标系原点为机器人本体，本类可退化为常量，#2b 整块砍掉
+
+    def to_world(self, x_local: float, z_local: float) -> Tuple[float, float]:
+        """机器人局部坐标 -> 世界坐标。
+
+        yaw 旋转方向：yaw=+pi/2 表示机器人从 +z 轴左转到 +x 轴。
+        """
+        cos = math.cos(self.yaw_rad)
+        sin = math.sin(self.yaw_rad)
+        x = self.x + x_local * cos + z_local * sin
+        z = self.z + z_local * cos - x_local * sin
+        return x, z
+
+    def to_local(self, x_world: float, z_world: float) -> Tuple[float, float]:
+        """世界坐标 -> 机器人局部坐标（to_world 的逆变换）。"""
+        dx = x_world - self.x
+        dz = z_world - self.z
+        cos = math.cos(self.yaw_rad)
+        sin = math.sin(self.yaw_rad)
+        x_local = dx * cos - dz * sin
+        z_local = dx * sin + dz * cos
+        return x_local, z_local
 
 
 @dataclass
 class Detection:
-    """单帧检测结果。provider 的输出格式。"""
+    """单帧检测结果。provider 的输出格式。
+
+    x/z 是世界坐标（米）。bbox 是原始图像像素 xyxy，进 evidence。
+    """
 
     class_name: str               # 检测器原始类名，如 "sports ball"
-    x: float                      # 世界坐标（米），地平面求交得出
+    x: float                      # 世界坐标（米），地平面求交 + RobotPose 转换得出
     z: float
     confidence: float
     radius_cm: float = 5.0
+    size_source: str = SIZE_SOURCE_DEFAULT
+    size_trusted: bool = False
     bbox: Optional[Tuple[float, float, float, float]] = None   # 像素框 xyxy，进 evidence
     frame_id: Optional[str] = None                     # 帧引用，进 evidence
     source: str = "mock"
     timestamp: float = 0.0
+    frame_quality: Optional[FrameQuality] = None
 
 
 @dataclass
@@ -65,9 +129,11 @@ class TrackedObject:
     name: str                     # 规范名（别名表映射后）
     aliases: List[str] = field(default_factory=list)
 
-    x: float = 0.0
-    z: float = 0.0
+    x: float = 0.0                # 世界坐标（米）
+    z: float = 0.0                # 世界坐标（米）
     radius_cm: float = 5.0
+    size_source: str = SIZE_SOURCE_DEFAULT
+    size_trusted: bool = False
     confidence: float = 0.0
 
     first_seen: float = 0.0
@@ -83,6 +149,7 @@ class TrackedObject:
     source: str = "mock"
     last_bbox: Optional[Tuple[float, float, float, float]] = None
     last_frame_id: Optional[str] = None
+    last_frame_quality: Optional[FrameQuality] = None
 
     def age(self, now: float) -> float:
         """距上次被真实看到过了多久（秒）。
