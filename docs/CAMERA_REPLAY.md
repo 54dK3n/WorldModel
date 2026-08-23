@@ -139,9 +139,10 @@ JSON 字段与 `world_model/calibration.py::CameraCalibration` 一一对应：
 ## 5. 离线回放运行方式
 
 ```bash
-python run_camera_replay.py \
+python3 run_camera_replay.py \
   --detections scenes/tennis_detection_replay.jsonl \
-  --calibration configs/overhead_camera.example.json
+  --calibration configs/overhead_camera.example.json \
+  --object-sizes configs/object_sizes.example.json
 ```
 
 输出包含：
@@ -173,6 +174,23 @@ python run_camera_replay.py \
   只有显式 `--relative-time-only` 才输出相对秒。
 
 ## 7. 尺寸证据与严格判定
+
+**信任边界：**
+
+- 相机/YOLO/公开数据集/回放文件只能提供原始检测、bbox、类别和检测置信度，
+  不允许自行声明物理尺寸可信。
+- 本地对象尺寸配置来自人工测量、产品规格、竞赛规则或已审核实例配置，
+  是唯一可以产生可信物理尺寸的来源。
+- `CONFIRMED` 只表示对象存在性经多帧确认，不等于物理尺寸可信。
+- 外部输入中的 `size_trusted` 在严格模式下逐条拒绝并计入 `detections_skipped`；
+  外部 `radius_cm` 只作为 `external_claim`，不可信。
+- 尺寸表只保存 canonical name；查询顺序：
+  `AliasTable.canonical(raw_class)` -> `ObjectSizeRegistry.lookup_class/instance`。
+
+本地尺寸配置：`configs/object_sizes.example.json`。
+球使用 `outer_radius`，容器使用 `inner_radius`。
+containment 阈值 = `container_inner_radius_cm - target_outer_radius_cm`。
+
 
 尺寸来源定义在 `world_model/types.py` 与 `world_model/size_policy.py`：
 

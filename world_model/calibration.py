@@ -89,6 +89,50 @@ class CameraCalibration:
     def height_above_ground_m(self) -> float:
         return self.camera_height_m - self.ground_plane_height_m
 
+    def project_pixel_to_ground_with_depth(
+        self, u: float, v: float
+    ) -> Tuple[float, float, float]:
+        """像素 -> (机器人局部地面 x, z, 光轴深度 t)。"""
+        if not math.isfinite(float(u)) or not math.isfinite(float(v)):
+            raise ValueError(f"像素坐标必须是有限数值，收到 u={u!r}, v={v!r}")
+
+        xn = (float(u) - self.cx) / self.fx
+        yn = (float(v) - self.cy) / self.fy
+        sin_p = math.sin(self.pitch_rad)
+        cos_p = math.cos(self.pitch_rad)
+        d_x = xn
+        d_y = -(yn * cos_p + sin_p)
+        d_z = -yn * sin_p + cos_p
+
+        if abs(d_y) < 1e-12:
+            raise ValueError(
+                f"像素 ({u:.2f}, {v:.2f}) 位于可投影地面区域之外：射线与地面平行"
+            )
+        t = (self.ground_plane_height_m - self.camera_height_m) / d_y
+        if t <= 0.0:
+            raise ValueError(
+                f"像素 ({u:.2f}, {v:.2f}) 位于可投影地面区域之外："
+                "射线与地面无正向交点（地平线以上或相机后方）"
+            )
+        x = self.camera_x_m + t * d_x
+        z = self.camera_z_m + t * d_z
+        if not (math.isfinite(x) and math.isfinite(z) and math.isfinite(t)):
+            raise ValueError(
+                f"像素 ({u:.2f}, {v:.2f}) 投影结果非有限值：x={x!r}, z={z!r}, t={t!r}"
+            )
+        ground_range = math.hypot(x - self.camera_x_m, z - self.camera_z_m)
+        if ground_range < self.min_ground_range_m:
+            raise ValueError(
+                f"像素 ({u:.2f}, {v:.2f}) 的交点小于最小量程："
+                f"{ground_range:.3f}m < {self.min_ground_range_m}m"
+            )
+        if ground_range > self.max_ground_range_m:
+            raise ValueError(
+                f"像素 ({u:.2f}, {v:.2f}) 的交点超过有效量程："
+                f"{ground_range:.3f}m > {self.max_ground_range_m}m"
+            )
+        return x, z, t
+
     def project_pixel_to_ground(self, u: float, v: float) -> Tuple[float, float]:
         """像素 -> 机器人局部地面坐标 (x, z)。不做 RobotPose 变换。"""
         if not math.isfinite(float(u)) or not math.isfinite(float(v)):

@@ -59,6 +59,7 @@ class JudgeContext:
     calibration_trusted: bool = False
     frame_quality: Optional[FrameQuality] = None
     coordinate_frame: str = COORDINATE_FRAME_WORLD
+    gripper_state_known: bool = False
 
 
 # ---------------------------------------------------------------------- 基类
@@ -112,6 +113,7 @@ class WorldModelDiffProvider(JudgeProvider):
                 calibration_trusted=ctx.calibration_trusted,
                 frame_quality=ctx.frame_quality,
                 coordinate_frame=ctx.coordinate_frame,
+                gripper_state_known=ctx.gripper_state_known,
             )
             return JudgeResponse(
                 success=ev["verdict"]["success"],
@@ -128,6 +130,7 @@ class WorldModelDiffProvider(JudgeProvider):
                 calibration_trusted=ctx.calibration_trusted,
                 frame_quality=ctx.frame_quality,
                 coordinate_frame=ctx.coordinate_frame,
+                gripper_state_known=ctx.gripper_state_known,
             )
             return JudgeResponse(
                 success=ev["verdict"]["success"],

@@ -19,9 +19,10 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
+from ..aliases import AliasTable
 from ..calibration import CameraCalibration, load_camera_calibration
 from ..raw import RawDetection, validate_detection_for_frame
-from ..size_policy import SizePolicy
+from ..size_policy import ObjectSizeRegistry, ProjectionContext, SizePolicy
 from ..types import (
     COORDINATE_FRAME_WORLD,
     Detection,
@@ -71,6 +72,9 @@ class CameraDetectorProvider(PerceptionProvider):
         time_origin: float | None = None,
         relative_time_only: bool = False,
         size_policy: SizePolicy | None = None,
+        object_sizes_path: str | Path | None = None,
+        aliases: AliasTable | None = None,
+        strict_input: bool = True,
     ):
         """两种用法：
 
@@ -161,12 +165,23 @@ class CameraDetectorProvider(PerceptionProvider):
         self.replay_path = Path(replay_path) if replay_path is not None else None
         self.time_origin = time_origin
         self.relative_time_only = relative_time_only
-        self.size_policy = size_policy or SizePolicy()
+        self.aliases = aliases or AliasTable()
+        self.object_size_registry = (
+            ObjectSizeRegistry.from_json(object_sizes_path)
+            if object_sizes_path is not None
+            else ObjectSizeRegistry()
+        )
+        self.size_policy = size_policy or SizePolicy(
+            registry=self.object_size_registry,
+            aliases=self.aliases,
+        )
+        self.strict_input = strict_input
 
         self.frames_loaded = 0
         self.frames_yielded = 0
         self.frames_skipped = 0
         self.detections_skipped = 0
+        self._pending_frames_skipped = 0
 
     # ------------------------------------------------------------------ 像素 -> 地面
 
@@ -223,6 +238,7 @@ class CameraDetectorProvider(PerceptionProvider):
         self.frames_yielded = 0
         self.frames_skipped = 0
         self.detections_skipped = 0
+        self._pending_frames_skipped = 0
         logger.info(
             "开始回放 path=%s frames=%d time_origin=%s calibration=%s calibration_trusted=%s",
             self.replay_path,
@@ -237,6 +253,7 @@ class CameraDetectorProvider(PerceptionProvider):
                 output = self._frame_to_output(raw_frame)
             except (ValueError, KeyError, TypeError) as exc:
                 self.frames_skipped += 1
+                self._pending_frames_skipped += 1
                 logger.warning(
                     "跳过整帧 frame_id=%s 原因=%s",
                     raw_frame.get("frame_id", "<unknown>") if isinstance(raw_frame, dict) else raw_frame,
@@ -244,6 +261,7 @@ class CameraDetectorProvider(PerceptionProvider):
                 )
                 continue
             self.frames_yielded += 1
+            self._pending_frames_skipped = 0
             logger.debug(
                 "回放帧 frame_id=%s timestamp=%.3f detections=%d",
                 raw_frame.get("frame_id", "<unknown>"),
@@ -362,6 +380,13 @@ class CameraDetectorProvider(PerceptionProvider):
                 frame_detections_skipped += 1
                 continue
             class_name = str(det_record.get("class_name", ""))
+            if "size_trusted" in det_record:
+                self._skip_detection(
+                    frame_id, det_idx, class_name or "<unknown>",
+                    "external size_trusted is forbidden",
+                )
+                frame_detections_skipped += 1
+                continue
             try:
                 raw = RawDetection(
                     class_name=class_name,
@@ -375,9 +400,22 @@ class CameraDetectorProvider(PerceptionProvider):
                 x1, y1, x2, y2 = raw.bbox
                 u = (x1 + x2) / 2.0
                 v = y2
-                x_local, z_local = self.calibration.project_pixel_to_ground(u, v)
+                x_local, z_local, optical_depth = self.calibration.project_pixel_to_ground_with_depth(u, v)
                 x, z = pose.to_world(x_local, z_local)
-                size_evidence = self._resolve_size(det_record, raw, x_local, z_local)
+                ground_range = math.hypot(
+                    x_local - self.calibration.camera_x_m,
+                    z_local - self.calibration.camera_z_m,
+                )
+                size_evidence = self._resolve_size(
+                    det_record, raw,
+                    ProjectionContext(
+                        ground_range_m=ground_range,
+                        optical_axis_depth_m=optical_depth,
+                        fx=self.calibration.fx,
+                        fy=self.calibration.fy,
+                    ),
+                    instance_id=det_record.get("instance_id"),
+                )
             except (TypeError, ValueError) as exc:
                 self._skip_detection(frame_id, det_idx, class_name or "<unknown>", str(exc))
                 frame_detections_skipped += 1
@@ -392,6 +430,8 @@ class CameraDetectorProvider(PerceptionProvider):
                     radius_cm=size_evidence.radius_cm,
                     size_source=size_evidence.size_source,
                     size_trusted=size_evidence.size_trusted,
+                    radius_semantics=size_evidence.radius_semantics,
+                    canonical_name=size_evidence.canonical_name,
                     bbox=raw.bbox,
                     frame_id=frame_id,
                     source=self.source,
@@ -399,7 +439,7 @@ class CameraDetectorProvider(PerceptionProvider):
                     frame_quality=FrameQuality(
                         frame_id=frame_id,
                         degraded=frame_detections_skipped > 0,
-                        frames_skipped=0,
+                        frames_skipped=self._pending_frames_skipped,
                         detections_skipped=frame_detections_skipped,
                         calibration_trusted=self.calibration_trusted,
                         coordinate_frame=COORDINATE_FRAME_WORLD,
@@ -424,27 +464,18 @@ class CameraDetectorProvider(PerceptionProvider):
         )
 
     def _resolve_size(self, det_record: Dict[str, Any], raw: RawDetection,
-                      x_local: float, z_local: float):
-        """尺寸来源策略：显式物理尺寸 > 实例配置 > bbox 启发式 > 未知。"""
-        try:
-            explicit = self.size_policy.from_detection_record(det_record)
-            if explicit is not None:
-                return explicit
-        except ValueError as exc:
-            raise ValueError(f"显式尺寸无效：{exc}") from exc
+                      projection_context: ProjectionContext,
+                      instance_id: Optional[str] = None):
+        """尺寸来源策略：本地 registry 是唯一可信来源。
 
-        from_config = self.size_policy.from_instance_config(raw.class_name)
-        if from_config is not None:
-            return from_config
-
-        ground_range = math.hypot(
-            x_local - self.calibration.camera_x_m,
-            z_local - self.calibration.camera_z_m,
-        )
-        return self.size_policy.from_bbox_heuristic(
-            raw.bbox,
-            ground_range_m=ground_range,
-            fx=self.calibration.fx,
-            camera_height_m=self.calibration.camera_height_m,
-            ground_plane_height_m=self.calibration.ground_plane_height_m,
+        解析顺序由 SizePolicy.resolve 决定：
+        Alias canonicalize -> instance registry -> class registry ->
+        external_claim（不可信）-> bbox heuristic（不可信）。
+        """
+        return self.size_policy.resolve(
+            class_name=raw.class_name,
+            record=det_record,
+            bbox=raw.bbox,
+            projection_context=projection_context,
+            instance_id=instance_id,
         )

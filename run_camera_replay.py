@@ -50,6 +50,11 @@ def main() -> None:
         help="相机标定 JSON（测试用途示例见 configs/overhead_camera.example.json）",
     )
     parser.add_argument(
+        "--object-sizes",
+        type=Path,
+        help="本地对象尺寸配置（如 configs/object_sizes.example.json）；不提供则无可信物理尺寸",
+    )
+    parser.add_argument(
         "--time-origin",
         type=float,
         default=None,
@@ -79,6 +84,7 @@ def main() -> None:
         replay_path=args.detections,
         time_origin=args.time_origin,
         relative_time_only=args.relative_time_only,
+        object_sizes_path=args.object_sizes,
     )
 
     stream = provider.stream()
@@ -114,7 +120,7 @@ def main() -> None:
 
         try:
             wm.update(dets, pose, now=ts)
-        except Exception as exc:  # provider/关联异常不允许丢 WorldModel 状态
+        except Exception:  # provider/关联异常不允许丢 WorldModel 状态
             logger.exception("WorldModel 更新失败 frame_id=%s；保持上一状态", dets[0].frame_id if dets else "<none>")
 
         print(f"  scene_observations: {wm.to_contract()}")

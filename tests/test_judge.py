@@ -21,13 +21,22 @@ from judge.evidence import (Caveat, EvidencePolicy, Reason,
 from judge.providers import (JudgeContext, JudgeRequest, WorldModelDiffProvider,
                              get_provider)
 from world_model import Detection, FrameQuality, RobotPose, WorldModel
-from world_model.types import ObjectState, TrackedObject
+from world_model.types import (
+    RADIUS_SEMANTICS_INNER,
+    RADIUS_SEMANTICS_OUTER,
+    SIZE_SOURCE_LOCAL_REGISTRY,
+    ObjectState,
+    TrackedObject,
+)
 
 
 def det(cls="sports ball", x=0.0, z=1.0, conf=0.95, r=3.3):
+    semantics = RADIUS_SEMANTICS_INNER if cls == "basket" else RADIUS_SEMANTICS_OUTER
+    canonical = "basket" if cls == "basket" else "ball"
     return Detection(
         class_name=cls, x=x, z=z, confidence=conf, radius_cm=r,
-        size_source="instance_config", size_trusted=True,
+        size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True,
+        radius_semantics=semantics, canonical_name=canonical,
         bbox=(0, 0, 10, 10), frame_id="f", source="test",
         frame_quality=FrameQuality(frame_id="f", degraded=False,
                                    calibration_trusted=True),
@@ -36,9 +45,11 @@ def det(cls="sports ball", x=0.0, z=1.0, conf=0.95, r=3.3):
 
 def obj(name, x, z, conf, r=3.3, last_seen=0.0, state=ObjectState.CONFIRMED,
         oid=None, unc=1.0):
+    semantics = RADIUS_SEMANTICS_INNER if name == "basket" else RADIUS_SEMANTICS_OUTER
     return TrackedObject(
         obj_id=oid or f"{name}_900", name=name, x=x, z=z, radius_cm=r,
-        size_source="instance_config", size_trusted=True,
+        size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True,
+        radius_semantics=semantics,
         confidence=conf, first_seen=0.0, last_seen=last_seen, last_updated=last_seen,
         hit_count=5, state=state, pose_uncertainty_cm=unc,
         source="test", last_bbox=(0, 0, 10, 10), last_frame_id="f",
@@ -73,6 +84,8 @@ def judge(before, after, now, ctx=None, gripper_closed=False,
     if ctx.frame_quality is None:
         ctx.frame_quality = FrameQuality(frame_id="f", degraded=False,
                                          calibration_trusted=True)
+    if ctx.gripper_state_known is False:
+        ctx.gripper_state_known = True
     return WorldModelDiffProvider().judge(
         JudgeRequest(task=task, target="ball", container="basket",
                      now=now, gripper_closed=gripper_closed),

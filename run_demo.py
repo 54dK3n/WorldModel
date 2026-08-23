@@ -7,13 +7,16 @@ from __future__ import annotations
 import json
 
 from judge.providers import JudgeContext, JudgeRequest, WorldModelDiffProvider
-from world_model import FrameQuality, WorldModel
+from world_model import WorldModel
 from world_model.decay import is_in_fov
 from world_model.providers import MockProvider
 
 
 def main() -> None:
-    provider = MockProvider("scenes/demo_scene.json")
+    provider = MockProvider(
+        "scenes/demo_scene.json",
+        object_sizes_path="configs/object_sizes.example.json",
+    )
     # 场景相对时刻 0.0 对应的 Unix 时间。不给的话导出的 timestamp 会落在 1970 年。
     wm = WorldModel(time_origin=provider.time_origin)
 
@@ -55,13 +58,7 @@ def main() -> None:
         before=before_snapshot or [],
         after=wm.snapshot(),
         # 判定主语用 id 锁定；契约里没有这个字段，走 JudgeContext 旁路传。
-        ctx=JudgeContext(
-            target_id=target_id,
-            calibration_trusted=True,
-            frame_quality=FrameQuality(
-                frame_id="demo", degraded=False, calibration_trusted=True,
-            ),
-        ),
+        ctx=JudgeContext(target_id=target_id),
     )
     print(f"success = {resp.success}")
     print(f"detail  = {resp.detail}")

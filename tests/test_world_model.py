@@ -10,6 +10,10 @@ import math
 import pytest
 
 from world_model import Detection, FrameQuality, RobotPose, WorldModel
+from world_model.types import (
+    RADIUS_SEMANTICS_OUTER,
+    SIZE_SOURCE_LOCAL_REGISTRY,
+)
 from world_model.aliases import AliasTable
 from world_model.association import AssociationConfig, associate
 from world_model.decay import FovConfig, is_in_fov
@@ -19,7 +23,9 @@ from world_model.types import ObjectState
 def det(cls="sports ball", x=0.0, z=1.0, conf=0.95):
     return Detection(
         class_name=cls, x=x, z=z, confidence=conf, radius_cm=3.3,
-        size_source="instance_config", size_trusted=True,
+        size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True,
+        radius_semantics=RADIUS_SEMANTICS_OUTER,
+        canonical_name="ball",
         frame_quality=FrameQuality(frame_id="f", degraded=False,
                                    calibration_trusted=True),
     )

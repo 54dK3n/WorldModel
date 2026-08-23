@@ -21,11 +21,20 @@ from enum import Enum
 from typing import List, Optional, Tuple
 
 # 尺寸证据来源
-SIZE_SOURCE_DETECTOR = "detector"             # 检测器显式输出物理尺寸
-SIZE_SOURCE_INSTANCE_CONFIG = "instance_config"  # 可信对象实例配置
-SIZE_SOURCE_BBOX_HEURISTIC = "bbox_heuristic"    # 根据标定与 bbox 估算
+SIZE_SOURCE_LOCAL_REGISTRY = "local_registry"  # 本地人工测量/规格/规则配置（唯一可信来源）
+SIZE_SOURCE_EXTERNAL_CLAIM = "external_claim"    # 检测器/回放/公开数据声称的尺寸（不可信）
+SIZE_SOURCE_BBOX_HEURISTIC = "bbox_heuristic"    # 根据标定与 bbox 估算（不可信）
 SIZE_SOURCE_DEFAULT = "default"               # 类别/代码默认值（不可信）
 SIZE_SOURCE_UNKNOWN = "unknown"               # 尺寸未知或缺失
+
+# 兼容旧字段（生产输入不得自行声明可信）
+SIZE_SOURCE_DETECTOR = "detector"
+SIZE_SOURCE_INSTANCE_CONFIG = "instance_config"
+
+# 半径语义
+RADIUS_SEMANTICS_OUTER = "outer_radius"
+RADIUS_SEMANTICS_INNER = "inner_radius"
+RADIUS_SEMANTICS_UNKNOWN = "unknown"
 
 # 坐标帧
 COORDINATE_FRAME_WORLD = "world"
@@ -61,6 +70,7 @@ class FrameQuality:
             not self.degraded
             and self.frames_skipped == 0
             and self.detections_skipped == 0
+            and self.calibration_trusted is True
             and self.coordinate_frame == COORDINATE_FRAME_WORLD
         )
 
@@ -114,6 +124,8 @@ class Detection:
     radius_cm: float = 5.0
     size_source: str = SIZE_SOURCE_DEFAULT
     size_trusted: bool = False
+    radius_semantics: str = RADIUS_SEMANTICS_UNKNOWN
+    canonical_name: Optional[str] = None
     bbox: Optional[Tuple[float, float, float, float]] = None   # 像素框 xyxy，进 evidence
     frame_id: Optional[str] = None                     # 帧引用，进 evidence
     source: str = "mock"
@@ -134,6 +146,7 @@ class TrackedObject:
     radius_cm: float = 5.0
     size_source: str = SIZE_SOURCE_DEFAULT
     size_trusted: bool = False
+    radius_semantics: str = RADIUS_SEMANTICS_UNKNOWN
     confidence: float = 0.0
 
     first_seen: float = 0.0

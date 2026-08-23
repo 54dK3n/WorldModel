@@ -20,6 +20,7 @@ from world_model.adapters import (
     to_debug_dict,
 )
 from world_model.aliases import AliasTable
+from world_model.calibration import CameraCalibration
 from world_model.association import AssociationConfig, associate
 from world_model.providers import CameraDetectorProvider
 from world_model.types import ObjectState, TrackedObject
@@ -40,13 +41,28 @@ def make_provider():
     )
 
 
+def write_object_sizes(tmp_path):
+    path = tmp_path / "object_sizes.json"
+    path.write_text(json.dumps({
+        "version": 1, "unit": "cm",
+        "objects": {
+            "ball": {"radius_cm": 3.3, "radius_semantics": "outer_radius",
+                     "source": "manual_measurement", "reviewed": True},
+            "basket": {"radius_cm": 15.0, "radius_semantics": "inner_radius",
+                       "source": "manual_measurement", "reviewed": True},
+        },
+    }), encoding="utf-8")
+    return path
+
+
 def make_replay_provider(tmp_path, frames, **kwargs):
-    """带测试标定的回放 provider。"""
+    """带测试标定与本地尺寸配置的回放 provider。"""
     kwargs.setdefault("time_origin", 1786417200.0)
     return CameraDetectorProvider(
         calibration=make_provider().calibration,
         replay_path=write_jsonl(tmp_path, frames, **kwargs),
         source="test_camera",
+        object_sizes_path=write_object_sizes(tmp_path),
     )
 
 
@@ -292,15 +308,19 @@ def test_frame_id_bbox_timestamp_enter_evidence(tmp_path):
 def test_relative_time_and_unix_time_are_not_mixed(tmp_path):
     trusted_ball = {
         "class_name": "tennis_ball", "confidence": 0.94,
-        "bbox": ball_bbox(320), "radius_cm": 3.3,
-        "size_source": "instance_config", "size_trusted": True,
+        "bbox": ball_bbox(320),
     }
     frames = [
         frame("f7", 7.0, [trusted_ball]),
         frame("f8", 8.0, [trusted_ball]),
         frame("f9", 9.0, [trusted_ball]),
     ]
-    p = make_replay_provider(tmp_path, frames, time_origin=1786417200.0)
+    p = CameraDetectorProvider(
+        calibration=CameraCalibration(is_real_calibration=True, source="real"),
+        replay_path=write_jsonl(tmp_path, frames, time_origin=1786417200.0),
+        source="test_camera",
+        object_sizes_path=write_object_sizes(tmp_path),
+    )
 
     wm = WorldModel(time_origin=1786417200.0)
     for ts, pose, dets in p.stream():

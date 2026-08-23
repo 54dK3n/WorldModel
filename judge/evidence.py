@@ -69,6 +69,11 @@ class Reason:
     DEGRADED_FRAME_EVIDENCE = "degraded_frame_evidence"
     MISSING_FRAME_QUALITY = "missing_frame_quality"
     UNKNOWN_COORDINATE_FRAME = "unknown_coordinate_frame"
+    MISSING_BEFORE_BASELINE = "missing_before_baseline"
+    DEGRADED_BEFORE_EVIDENCE = "degraded_before_evidence"
+    DEGRADED_AFTER_EVIDENCE = "degraded_after_evidence"
+    MISSING_GRIPPER_STATE = "missing_gripper_state"
+    INVALID_SIZE_SEMANTICS = "invalid_size_semantics"
 
 
 # 非阻断提示：判定照给，但下游应知道这条判定的能力边界
@@ -178,12 +183,23 @@ def check_quality(
     return reasons
 
 
-def _check_size_evidence(obj: Optional[TrackedObject]) -> List[str]:
-    if obj is None or obj.size_trusted:
+def _check_size_evidence(obj: Optional[TrackedObject], role: str) -> List[str]:
+    """检查尺寸可信性与语义。role 为 target 或 container。"""
+    if obj is None:
         return []
-    if obj.radius_cm <= 0 or obj.size_source == SIZE_SOURCE_UNKNOWN:
-        return [Reason.MISSING_SIZE_EVIDENCE]
-    return [Reason.UNTRUSTED_SIZE_EVIDENCE]
+    reasons: List[str] = []
+    if not obj.size_trusted:
+        if obj.radius_cm <= 0 or obj.size_source == SIZE_SOURCE_UNKNOWN:
+            reasons.append(Reason.MISSING_SIZE_EVIDENCE)
+        else:
+            reasons.append(Reason.UNTRUSTED_SIZE_EVIDENCE)
+        return reasons
+    expected_semantics = (
+        "outer_radius" if role == "target" else "inner_radius"
+    )
+    if obj.radius_semantics != expected_semantics:
+        reasons.append(Reason.INVALID_SIZE_SEMANTICS)
+    return reasons
 
 
 def _check_evidence_preconditions(
@@ -191,18 +207,39 @@ def _check_evidence_preconditions(
     calibration_trusted: bool,
     frame_quality: Optional[FrameQuality],
     coordinate_frame: Optional[str],
+    t_before: Optional[TrackedObject] = None,
+    t_after: Optional[TrackedObject] = None,
+    c_before: Optional[TrackedObject] = None,
+    c_after: Optional[TrackedObject] = None,
 ) -> List[str]:
     reasons: List[str] = []
     if policy.require_coordinate_frame and coordinate_frame != COORDINATE_FRAME_WORLD:
         reasons.append(Reason.UNKNOWN_COORDINATE_FRAME)
     if policy.require_calibration_trusted and not calibration_trusted:
         reasons.append(Reason.UNTRUSTED_CALIBRATION)
-    if policy.require_frame_quality:
-        if frame_quality is None:
+    if policy.require_frame_quality and frame_quality is not None and (
+        frame_quality.degraded or frame_quality.frames_skipped > 0
+        or frame_quality.detections_skipped > 0
+    ):
+        reasons.append(Reason.DEGRADED_AFTER_EVIDENCE)
+
+    for obj, when in ((t_before, "before"), (c_before, "before"),
+                      (t_after, "after"), (c_after, "after")):
+        if obj is None or not policy.require_frame_quality:
+            continue
+        fq = obj.last_frame_quality
+        if fq is None:
             reasons.append(Reason.MISSING_FRAME_QUALITY)
-        elif (frame_quality.degraded or frame_quality.frames_skipped > 0
-              or frame_quality.detections_skipped > 0):
-            reasons.append(Reason.DEGRADED_FRAME_EVIDENCE)
+            continue
+        if fq.degraded or fq.frames_skipped > 0 or fq.detections_skipped > 0:
+            reasons.append(
+                Reason.DEGRADED_BEFORE_EVIDENCE if when == "before"
+                else Reason.DEGRADED_AFTER_EVIDENCE
+            )
+        if policy.require_calibration_trusted and fq.calibration_trusted is not True:
+            reasons.append(Reason.UNTRUSTED_CALIBRATION)
+        if policy.require_coordinate_frame and fq.coordinate_frame != COORDINATE_FRAME_WORLD:
+            reasons.append(Reason.UNKNOWN_COORDINATE_FRAME)
     return reasons
 
 
@@ -238,6 +275,7 @@ def build_containment_evidence(
     calibration_trusted: bool = False,
     frame_quality: Optional[FrameQuality] = None,
     coordinate_frame: Optional[str] = COORDINATE_FRAME_WORLD,
+    gripper_state_known: bool = False,
 ) -> Dict:
     """判定"target 是否**被放进**了 container"，并给出完整证据链。
 
@@ -275,10 +313,17 @@ def build_containment_evidence(
 
     reasons += check_quality(t_after, now, policy, Reason.MISSING_TARGET)
     reasons += check_quality(c_after, now, policy, Reason.MISSING_CONTAINER)
-    reasons += _check_size_evidence(t_after)
-    reasons += _check_size_evidence(c_after)
+    reasons += _check_size_evidence(t_after, "target")
+    reasons += _check_size_evidence(c_after, "container")
+    if t_after is not None and t_before is None:
+        reasons.append(Reason.MISSING_BEFORE_BASELINE)
+    if c_after is not None and c_before is None:
+        reasons.append(Reason.MISSING_BEFORE_BASELINE)
+    if not gripper_state_known:
+        reasons.append(Reason.MISSING_GRIPPER_STATE)
     reasons += _check_evidence_preconditions(
-        policy, calibration_trusted, frame_quality, coordinate_frame
+        policy, calibration_trusted, frame_quality, coordinate_frame,
+        t_before, t_after, c_before, c_after,
     )
 
     if t_after is None or c_after is None:
@@ -313,7 +358,7 @@ def build_containment_evidence(
     if policy.require_state_change and satisfied_before is True and satisfied_after:
         reasons.append(Reason.NO_STATE_CHANGE)
     # 夹爪还闭着 -> 球多半还在手里悬在桶上方，俯视投影分不出来
-    if gripper_closed:
+    if gripper_state_known and gripper_closed:
         reasons.append(Reason.STILL_GRASPED)
 
     # ---- 陈旧度 ----
@@ -364,6 +409,11 @@ _REASON_TEXT = {
     Reason.DEGRADED_FRAME_EVIDENCE: "当前证据帧存在被跳过的检测，属于降级帧，不得据其判定成功",
     Reason.MISSING_FRAME_QUALITY: "缺少帧质量证据，无法确认证据完整",
     Reason.UNKNOWN_COORDINATE_FRAME: "坐标系不明确，无法可靠比较前后世界坐标",
+    Reason.MISSING_BEFORE_BASELINE: "缺少动作前基线，无法证明本次动作造成了状态变化",
+    Reason.DEGRADED_BEFORE_EVIDENCE: "动作前证据帧存在跳过/降级，不可用于判定成功",
+    Reason.DEGRADED_AFTER_EVIDENCE: "动作后证据帧存在跳过/降级，不可用于判定成功",
+    Reason.MISSING_GRIPPER_STATE: "缺少夹爪状态，无法排除球仍被抓在手里",
+    Reason.INVALID_SIZE_SEMANTICS: "半径语义不正确（球应为 outer_radius，容器应为 inner_radius）",
 }
 
 
@@ -429,7 +479,7 @@ def build_grasp_evidence(
         max_staleness_s=policy.grasp_grace_s,
     )
     reasons += check_quality(t, now, stale_policy, Reason.MISSING_TARGET)
-    reasons += _check_size_evidence(t)
+    reasons += _check_size_evidence(t, "target")
     reasons += _check_evidence_preconditions(
         policy, calibration_trusted, frame_quality, coordinate_frame
     )

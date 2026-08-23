@@ -11,8 +11,9 @@ python3 run_demo.py                  # 端到端：mock感知 -> World Model -> 
 python3 run_camera_replay.py \
     --detections scenes/tennis_detection_replay.jsonl \
     --calibration configs/overhead_camera.example.json \
+    --object-sizes configs/object_sizes.example.json \
     --log-file logs/camera_replay.log
-python3 -m pytest tests/ -q          # 107 passed
+python3 -m pytest tests/ -q          # 130 passed
 python3 tools/false_verdict_probe.py # 判定可靠性探针：16 PASS / 0 FAIL / 1 已知边界
 ```
 
@@ -27,12 +28,13 @@ wm_kit/
 ├── docs/CAMERA_REPLAY.md         外部检测接入/回放/标定参数说明
 ├── run_camera_replay.py          离线回放演示
 ├── configs/
-│   └── overhead_camera.example.json  测试用途标定（非真实标定）
+│   ├── overhead_camera.example.json  测试用途标定（非真实标定）
+│   └── object_sizes.example.json    本地可信物理尺寸（唯一可信来源）
 ├── world_model/
 │   ├── types.py                  Detection / TrackedObject / RobotPose / 状态机
 │   ├── raw.py                    RawDetection / DetectionFrame 检测输入契约
 │   ├── calibration.py            CameraCalibration 标定参数 + 统一可见性模型
-│   ├── size_policy.py            尺寸证据策略（detector/instance/bbox/default）
+│   ├── size_policy.py            ObjectSizeRegistry / SizePolicy（本地可信尺寸唯一来源）
 │   ├── aliases.py                #5 别名表
 │   ├── association.py            #3 关联：代价矩阵 + 门控 + 贪心
 │   ├── decay.py                  #4 时效：统一可见性模型 + 双模衰减
@@ -51,9 +53,10 @@ wm_kit/
 ├── logs/                         各次运行的输出记录
 └── tests/
     ├── test_world_model.py       20 条：信念维护的不变式
+    ├── test_size_policy.py        7 条：本地尺寸配置与信任边界
     ├── test_judge.py             29 条：每条对应一个曾经的虚假判定
     ├── test_camera_provider.py   24 条：相机provider/像素投影/输入契约/回放
-    └── test_strict_safety.py     34 条：严格失败关闭/尺寸证据/边界/对抗不变量
+    └── test_strict_safety.py     50 条：严格失败关闭/尺寸证据/边界/对抗不变量
 ```
 
 判定内核的设计与修复记录见 **[DESIGN.md 第十节](DESIGN.md)**，

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import copy
 import itertools
+import logging
 import math
 import time
 from typing import Dict, List, Optional, Sequence
@@ -20,12 +21,15 @@ from .association import AssociationConfig, associate
 from .decay import DecayConfig, FovConfig, apply_decay, on_hit
 from .types import (
     COORDINATE_FRAME_WORLD,
+    RADIUS_SEMANTICS_UNKNOWN,
     Detection,
     FrameQuality,
     ObjectState,
     RobotPose,
     TrackedObject,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class WorldModel:
@@ -114,22 +118,34 @@ class WorldModel:
         on_hit(obj, self.decay_cfg)
 
     def _fuse_size(self, obj: TrackedObject, det: Detection, a: float) -> None:
-        """尺寸证据融合：可信尺寸优先，不可信尺寸不覆盖可信尺寸。"""
+        """尺寸证据融合：本地可信尺寸优先，不可信尺寸不能通过多帧融合变可信。"""
         if det.size_trusted and not obj.size_trusted:
-            obj.radius_cm = det.radius_cm
-            obj.size_source = det.size_source
-            obj.size_trusted = True
+            self._set_size(obj, det)
         elif det.size_trusted and obj.size_trusted:
+            # 本地 registry 的尺寸不随 bbox 平滑；仅当两者都可信时做保守平均
             obj.radius_cm = a * det.radius_cm + (1 - a) * obj.radius_cm
             obj.size_source = det.size_source
             obj.size_trusted = True
+            obj.radius_semantics = det.radius_semantics
         elif not det.size_trusted and obj.size_trusted:
-            # 保持可信尺寸，不被启发式/默认值稀释
-            pass
+            # 外部声明 / bbox heuristic 不得覆盖本地可信尺寸
+            logger.warning(
+                "尺寸来源冲突 obj_id=%s：忽略不可信观测 source=%s radius=%.2f，"
+                "保留本地可信尺寸 %.2f",
+                obj.obj_id, det.size_source, det.radius_cm, obj.radius_cm,
+            )
         else:
             obj.radius_cm = a * det.radius_cm + (1 - a) * obj.radius_cm
-            obj.size_source = det.size_source if not obj.size_trusted else obj.size_source
+            obj.size_source = det.size_source
             obj.size_trusted = False
+            obj.radius_semantics = det.radius_semantics
+
+    @staticmethod
+    def _set_size(obj: TrackedObject, det: Detection) -> None:
+        obj.radius_cm = det.radius_cm
+        obj.size_source = det.size_source
+        obj.size_trusted = det.size_trusted
+        obj.radius_semantics = det.radius_semantics
 
     def _spawn(self, det: Detection, now: float) -> None:
         name = self.aliases.canonical(det.class_name)
@@ -144,6 +160,7 @@ class WorldModel:
             confidence=det.confidence,
             size_source=det.size_source,
             size_trusted=det.size_trusted,
+            radius_semantics=det.radius_semantics,
             first_seen=now,
             last_seen=now,
             last_updated=now,
@@ -186,23 +203,62 @@ class WorldModel:
     ) -> List[Dict]:
         """导出正式 scene_observations。
 
-        默认契约过滤：仅 CONFIRMED、置信度达标、未过期、尺寸可信、坐标有限。
+        默认契约过滤：仅 CONFIRMED、置信度达标、未过期、尺寸可信、语义正确、
+        帧质量完整、标定可信、坐标为 world、坐标有限。
         调试请直接使用 get_scene() / snapshot()，不要把 TENTATIVE 误检当正式输出。
         """
         from .adapters import to_scene_observations
         now = now if now is not None else (self.last_update_time if self.last_update_time is not None else time.time())
         objs = []
         for o in self._objects.values():
-            if o.state != ObjectState.CONFIRMED:
-                continue
-            if o.confidence < min_confidence:
-                continue
-            age = o.age(now)
-            if age < 0.0 or age > max_staleness_s:
-                continue
-            if require_size_trusted and not o.size_trusted:
-                continue
-            if not (math.isfinite(o.x) and math.isfinite(o.z)):
+            reasons = self._contract_exclude_reasons(
+                o, now, min_confidence, max_staleness_s, require_size_trusted
+            )
+            if reasons:
+                logger.debug(
+                    "exclude obj_id=%s reasons=%s",
+                    o.obj_id, ",".join(reasons),
+                )
                 continue
             objs.append(o)
         return to_scene_observations(objs, time_origin=self.time_origin)
+
+    def _contract_exclude_reasons(
+        self,
+        o: TrackedObject,
+        now: float,
+        min_confidence: float,
+        max_staleness_s: float,
+        require_size_trusted: bool,
+    ) -> List[str]:
+        reasons: List[str] = []
+        if o.state != ObjectState.CONFIRMED:
+            reasons.append("unconfirmed_track")
+        if o.confidence < min_confidence:
+            reasons.append("low_confidence")
+        age = o.age(now)
+        if age < 0.0:
+            reasons.append("clock_skew")
+        elif age > max_staleness_s:
+            reasons.append("stale_evidence")
+        if require_size_trusted and not o.size_trusted:
+            reasons.append("untrusted_size_evidence")
+        if o.radius_semantics not in ("outer_radius", "inner_radius"):
+            reasons.append("invalid_size_semantics")
+        fq = o.last_frame_quality
+        if fq is None:
+            reasons.append("missing_frame_quality")
+        else:
+            if fq.degraded:
+                reasons.append("degraded_frame")
+            if fq.frames_skipped > 0:
+                reasons.append("frames_skipped")
+            if fq.detections_skipped > 0:
+                reasons.append("detections_skipped")
+            if fq.calibration_trusted is not True:
+                reasons.append("untrusted_calibration")
+            if fq.coordinate_frame != COORDINATE_FRAME_WORLD:
+                reasons.append("unknown_coordinate_frame")
+        if not (math.isfinite(o.x) and math.isfinite(o.z)):
+            reasons.append("non_finite_coordinates")
+        return reasons

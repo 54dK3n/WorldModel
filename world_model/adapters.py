@@ -146,5 +146,6 @@ def to_debug_dict(obj: TrackedObject) -> Dict:
         } if obj.last_frame_quality else None,
         "size_source": obj.size_source,
         "size_trusted": obj.size_trusted,
+        "radius_semantics": obj.radius_semantics,
         "source": obj.source,
     }

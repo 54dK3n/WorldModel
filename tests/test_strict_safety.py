@@ -16,9 +16,11 @@ from world_model.calibration import CameraCalibration
 from world_model.providers import CameraDetectorProvider
 from world_model.types import (
     COORDINATE_FRAME_WORLD,
+    RADIUS_SEMANTICS_INNER,
+    RADIUS_SEMANTICS_OUTER,
     SIZE_SOURCE_BBOX_HEURISTIC,
     SIZE_SOURCE_DEFAULT,
-    SIZE_SOURCE_INSTANCE_CONFIG,
+    SIZE_SOURCE_LOCAL_REGISTRY,
     SIZE_SOURCE_UNKNOWN,
     ObjectState,
     TrackedObject,
@@ -29,9 +31,11 @@ COMPLETE_FQ = FrameQuality(frame_id="f", degraded=False, calibration_trusted=Tru
 
 def make_trusted_track(name, x, z, r, oid, last_seen=0.0, conf=0.9,
                        state=ObjectState.CONFIRMED, unc=0.0, hit_count=5):
+    semantics = RADIUS_SEMANTICS_INNER if name == "basket" else RADIUS_SEMANTICS_OUTER
     return TrackedObject(
         obj_id=oid, name=name, x=x, z=z, radius_cm=r,
-        size_source=SIZE_SOURCE_INSTANCE_CONFIG, size_trusted=True,
+        size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True,
+        radius_semantics=semantics,
         confidence=conf, first_seen=0.0, last_seen=last_seen, last_updated=last_seen,
         hit_count=hit_count, state=state, pose_uncertainty_cm=unc,
         source="test", last_bbox=(0, 0, 10, 10), last_frame_id="f",
@@ -41,7 +45,8 @@ def make_trusted_track(name, x, z, r, oid, last_seen=0.0, conf=0.9,
 
 def strict_judge(before, after, now=0.5, *, target_id="ball_001",
                  calibration_trusted=True, frame_quality=COMPLETE_FQ,
-                 coordinate_frame=COORDINATE_FRAME_WORLD, gripper_closed=False):
+                 coordinate_frame=COORDINATE_FRAME_WORLD, gripper_closed=False,
+                 gripper_state_known=True):
     return WorldModelDiffProvider().judge(
         JudgeRequest(task="put_ball_in_basket", target="ball", container="basket",
                      now=now, gripper_closed=gripper_closed),
@@ -51,6 +56,7 @@ def strict_judge(before, after, now=0.5, *, target_id="ball_001",
             calibration_trusted=calibration_trusted,
             frame_quality=frame_quality,
             coordinate_frame=coordinate_frame,
+            gripper_state_known=gripper_state_known,
         ),
     )
 
@@ -125,16 +131,16 @@ def test_single_frame_false_detection_does_not_enter_contract_or_judge():
     for t in (0.0, 0.5, 1.0):
         wm.update([
             Detection("basket", 0.0, 0.0, 0.92, radius_cm=15.0,
-                      size_source=SIZE_SOURCE_INSTANCE_CONFIG, size_trusted=True,
+                      size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True,
                       frame_quality=COMPLETE_FQ),
         ], pose, now=t)
     before = wm.snapshot()
     wm.update([
         Detection("basket", 0.0, 0.0, 0.92, radius_cm=15.0,
-                  size_source=SIZE_SOURCE_INSTANCE_CONFIG, size_trusted=True,
+                  size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True,
                   frame_quality=COMPLETE_FQ),
         Detection("sports ball", 0.0, 0.0, 0.99, radius_cm=3.3,
-                  size_source=SIZE_SOURCE_INSTANCE_CONFIG, size_trusted=True,
+                  size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True,
                   frame_quality=COMPLETE_FQ),
     ], pose, now=1.5)
     after = wm.snapshot()
@@ -154,17 +160,17 @@ def test_single_frame_false_detection_decays_away_without_ambiguity():
     pose = RobotPose()
     for t in (0.0, 0.5, 1.0):
         wm.update([Detection("basket", -0.5, 1.6, 0.92, radius_cm=15.0,
-                             size_source=SIZE_SOURCE_INSTANCE_CONFIG, size_trusted=True)],
+                             size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True)],
                   pose, now=t)
     wm.update([Detection("basket", -0.5, 1.6, 0.92, radius_cm=15.0,
-                         size_source=SIZE_SOURCE_INSTANCE_CONFIG, size_trusted=True),
+                         size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True),
                Detection("sports ball", -0.5, 1.6, 0.99, radius_cm=3.3,
-                         size_source=SIZE_SOURCE_INSTANCE_CONFIG, size_trusted=True)],
+                         size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True)],
               pose, now=1.5)
     assert wm.get_object("ball") is not None
     for t in (2.0, 2.5, 3.0, 4.0, 6.0, 10.0):
         wm.update([Detection("basket", -0.5, 1.6, 0.92, radius_cm=15.0,
-                             size_source=SIZE_SOURCE_INSTANCE_CONFIG, size_trusted=True)],
+                             size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True)],
                   pose, now=t)
     assert wm.get_object("ball") is None, "单帧误检不得长期作为同名对象残留"
 
@@ -254,7 +260,7 @@ def test_coordinate_transform_consistency_and_stable_track():
         assert abs(x_world - world_x) < 1e-6
         assert abs(z_world - world_z) < 1e-6
         det = Detection("basket", x_world, z_world, 0.92, radius_cm=15.0,
-                        size_source=SIZE_SOURCE_INSTANCE_CONFIG, size_trusted=True,
+                        size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True,
                         frame_quality=COMPLETE_FQ)
         wm.update([det], pose, now=float(i))
         if oid is None:
@@ -291,20 +297,29 @@ def test_partial_bad_detections_keep_good_ones_and_mark_degraded(tmp_path, caplo
         "image_height": 640,
         "robot_pose": {"x": 0.0, "z": 0.0, "yaw_rad": 0.0, "pose_uncertainty_cm": 1.0},
         "detections": [
-            {"class_name": "tennis_ball", "confidence": 0.94, "bbox": good_ball_bbox,
-             "radius_cm": 3.3, "size_source": "instance_config", "size_trusted": True},
+            {"class_name": "tennis_ball", "confidence": 0.94, "bbox": good_ball_bbox},
             {"class_name": "tennis_ball", "confidence": 0.9,
              "bbox": [0, 0, 640.4, 20]},
             {"class_name": "tennis_ball", "confidence": float("nan"), "bbox": [10, 10, 30, 30]},
-            {"class_name": "bucket", "confidence": 0.92, "bbox": good_bucket_bbox,
-             "radius_cm": 15.0, "size_source": "instance_config", "size_trusted": True},
+            {"class_name": "bucket", "confidence": 0.92, "bbox": good_bucket_bbox},
         ],
     }
+    object_sizes = tmp_path / "object_sizes.json"
+    object_sizes.write_text(json.dumps({
+        "version": 1, "unit": "cm",
+        "objects": {
+            "ball": {"radius_cm": 3.3, "radius_semantics": "outer_radius",
+                     "source": "manual_measurement", "reviewed": True},
+            "basket": {"radius_cm": 15.0, "radius_semantics": "inner_radius",
+                       "source": "manual_measurement", "reviewed": True},
+        },
+    }), encoding="utf-8")
     path = tmp_path / "partial.jsonl"
     path.write_text(json.dumps({"time_origin": 1786417200.0}) + "\n" +
                     json.dumps(frame_data) + "\n", encoding="utf-8")
     cal = make_cal(is_real_calibration=True, source="real")
-    p = CameraDetectorProvider(calibration=cal, replay_path=path)
+    p = CameraDetectorProvider(calibration=cal, replay_path=path,
+                               object_sizes_path=object_sizes)
     with caplog.at_level("WARNING"):
         outputs = list(p.stream())
     assert len(outputs) == 1
@@ -485,3 +500,236 @@ def test_false_success_invariants(scenario):
     )
     assert resp.success is False, f"场景 {scenario} 不应成功，但返回了 True"
     assert resp.evidence["verdict"]["success"] is False
+
+
+# ------------------------------------------------------------------ 严格失败关闭补充
+
+def test_missing_before_baseline_fails():
+    after = [
+        make_trusted_track("ball", 0.1169, 0.0, 3.3, "ball_001"),
+        make_trusted_track("basket", 0.0, 0.0, 15.0, "basket_001"),
+    ]
+    resp = strict_judge([], after, target_id="ball_001")
+    assert resp.success is False
+    reasons = resp.evidence["verdict"]["reasons"]
+    assert Reason.MISSING_BEFORE_BASELINE in reasons or Reason.IDENTITY_BROKEN in reasons
+
+
+def test_object_evidence_cannot_be_washed_by_context():
+    bad_fq = FrameQuality(frame_id="f", degraded=True, frames_skipped=3,
+                          detections_skipped=2, calibration_trusted=False,
+                          coordinate_frame="robot")
+    before = [
+        make_trusted_track("ball", 1.0, 0.0, 3.3, "ball_001"),
+        make_trusted_track("basket", 0.0, 0.0, 15.0, "basket_001"),
+    ]
+    after = [
+        make_trusted_track("ball", 0.1169, 0.0, 3.3, "ball_001"),
+        make_trusted_track("basket", 0.0, 0.0, 15.0, "basket_001"),
+    ]
+    for o in before + after:
+        o.last_frame_quality = bad_fq
+    resp = strict_judge(before, after, calibration_trusted=True,
+                        frame_quality=COMPLETE_FQ, coordinate_frame=COORDINATE_FRAME_WORLD)
+    assert resp.success is False
+    reasons = resp.evidence["verdict"]["reasons"]
+    assert Reason.DEGRADED_AFTER_EVIDENCE in reasons
+    assert Reason.DEGRADED_BEFORE_EVIDENCE in reasons
+    assert Reason.UNTRUSTED_CALIBRATION in reasons
+    assert Reason.UNKNOWN_COORDINATE_FRAME in reasons
+
+
+def test_context_cannot_override_object_untrusted():
+    before = [make_trusted_track("ball", 1.0, 0.0, 3.3, "ball_001"),
+              make_trusted_track("basket", 0.0, 0.0, 15.0, "basket_001")]
+    after = [make_trusted_track("ball", 0.1169, 0.0, 3.3, "ball_001"),
+             make_trusted_track("basket", 0.0, 0.0, 15.0, "basket_001")]
+    # 对象证据完整可信，但 context 不可信 -> 失败
+    resp = strict_judge(before, after, calibration_trusted=False)
+    assert resp.success is False
+    assert Reason.UNTRUSTED_CALIBRATION in resp.evidence["verdict"]["reasons"]
+
+
+def test_ball_semantics_must_be_outer():
+    before, after = baseline_pair()
+    for o in before + after:
+        if o.name == "ball":
+            o.radius_semantics = "inner_radius"
+    resp = strict_judge(before, after)
+    assert resp.success is False
+    assert Reason.INVALID_SIZE_SEMANTICS in resp.evidence["verdict"]["reasons"]
+
+
+def test_basket_semantics_must_be_inner():
+    before, after = baseline_pair()
+    for o in before + after:
+        if o.name == "basket":
+            o.radius_semantics = "outer_radius"
+    resp = strict_judge(before, after)
+    assert resp.success is False
+    assert Reason.INVALID_SIZE_SEMANTICS in resp.evidence["verdict"]["reasons"]
+
+
+def test_missing_gripper_state_fails():
+    before, after = baseline_pair()
+    resp = strict_judge(before, after, gripper_state_known=False)
+    assert resp.success is False
+    assert Reason.MISSING_GRIPPER_STATE in resp.evidence["verdict"]["reasons"]
+
+
+def test_threshold_override_does_not_bypass_size_evidence():
+    before, after = baseline_pair()
+    for o in before + after:
+        o.size_source = SIZE_SOURCE_UNKNOWN
+        o.size_trusted = False
+        o.radius_cm = -1.0
+    ev = build_containment_evidence(
+        before, after, "ball", "basket", 0.5,
+        target_id="ball_001",
+        calibration_trusted=True,
+        frame_quality=COMPLETE_FQ,
+        coordinate_frame=COORDINATE_FRAME_WORLD,
+        gripper_state_known=True,
+        threshold_cm=999.0,
+    )
+    assert ev["verdict"]["success"] is False
+    assert Reason.MISSING_SIZE_EVIDENCE in ev["verdict"]["reasons"]
+
+
+def test_frames_skipped_gap_is_recorded_and_blocks_judge(tmp_path):
+    import json
+    object_sizes = tmp_path / "object_sizes.json"
+    object_sizes.write_text(json.dumps({
+        "version": 1, "unit": "cm",
+        "objects": {
+            "ball": {"radius_cm": 3.3, "radius_semantics": "outer_radius",
+                     "source": "manual_measurement", "reviewed": True},
+            "basket": {"radius_cm": 15.0, "radius_semantics": "inner_radius",
+                       "source": "manual_measurement", "reviewed": True},
+        },
+    }), encoding="utf-8")
+    cal = make_cal(is_real_calibration=True, source="real")
+    good1 = {"frame_id": "f0", "timestamp": 0.0, "image_width": 640, "image_height": 640,
+             "robot_pose": {"x": 0, "z": 0, "yaw_rad": 0, "pose_uncertainty_cm": 0},
+             "detections": [{"class_name": "tennis_ball", "confidence": 0.9,
+                             "bbox": [308, 543, 332, 567]}]}
+    bad = {"frame_id": "bad", "timestamp": 0.5, "image_width": 640, "image_height": 640,
+           "robot_pose": {"x": 0, "z": 0, "yaw_rad": 0, "pose_uncertainty_cm": 0},
+           "detections": []}
+    # bad frame missing nothing; use invalid timestamp to force frame skip
+    bad["timestamp"] = float("nan")
+    good2 = {"frame_id": "f2", "timestamp": 1.0, "image_width": 640, "image_height": 640,
+             "robot_pose": {"x": 0, "z": 0, "yaw_rad": 0, "pose_uncertainty_cm": 0},
+             "detections": [{"class_name": "tennis_ball", "confidence": 0.9,
+                             "bbox": [308, 543, 332, 567]}]}
+    path = tmp_path / "replay.jsonl"
+    path.write_text(json.dumps({"time_origin": 1786417200.0}) + "\n" +
+                    json.dumps(good1) + "\n" +
+                    json.dumps(bad) + "\n" +
+                    json.dumps(good2) + "\n", encoding="utf-8")
+    p = CameraDetectorProvider(calibration=cal, replay_path=path,
+                               object_sizes_path=object_sizes)
+    outputs = list(p.stream())
+    assert p.frames_skipped == 1
+    assert len(outputs) == 2
+    # 第二帧的 FrameQuality 记录了中间跳过的一帧
+    assert outputs[1][2][0].frame_quality.frames_skipped == 1
+    # 该帧对象若用于 Judge，应因 frames_skipped > 0 失败
+    wm = WorldModel(visibility=cal)
+    for ts, pose, dets in outputs:
+        wm.update(dets, pose, now=ts)
+    snap = wm.snapshot()
+    ball_after = [o for o in snap if o.name == "ball"][0]
+    basket_after = make_trusted_track("basket", 0.0, 0.0, 15.0, "basket_001")
+    ev = build_containment_evidence(
+        [], [ball_after, basket_after], "ball", "basket", 1.0,
+        target_id=ball_after.obj_id,
+        calibration_trusted=True,
+        frame_quality=None,
+        coordinate_frame=COORDINATE_FRAME_WORLD,
+        gripper_state_known=True,
+    )
+    assert ev["verdict"]["success"] is False
+
+
+# ------------------------------------------------------------------ 外部信任注入与裸 radius
+
+def _make_replay_for_detections(tmp_path, detections):
+    import json
+    object_sizes = tmp_path / "object_sizes.json"
+    object_sizes.write_text(json.dumps({
+        "version": 1, "unit": "cm",
+        "objects": {
+            "ball": {"radius_cm": 3.3, "radius_semantics": "outer_radius",
+                     "source": "manual_measurement", "reviewed": True},
+            "basket": {"radius_cm": 15.0, "radius_semantics": "inner_radius",
+                       "source": "manual_measurement", "reviewed": True},
+        },
+    }), encoding="utf-8")
+    path = tmp_path / "replay.jsonl"
+    frame = {"frame_id": "f0", "timestamp": 0.0, "image_width": 640, "image_height": 640,
+             "robot_pose": {"x": 0, "z": 0, "yaw_rad": 0, "pose_uncertainty_cm": 0},
+             "detections": detections}
+    path.write_text(json.dumps({"time_origin": 1786417200.0}) + "\n" +
+                    json.dumps(frame) + "\n", encoding="utf-8")
+    return path, object_sizes
+
+
+@pytest.mark.parametrize("bad_trust", [True, False, "true", "false", 1])
+def test_external_size_trusted_variants_rejected_by_provider(tmp_path, bad_trust):
+    detections = [{
+        "class_name": "tennis_ball", "confidence": 0.9,
+        "bbox": [308, 543, 332, 567], "size_trusted": bad_trust,
+    }]
+    path, object_sizes = _make_replay_for_detections(tmp_path, detections)
+    cal = make_cal(is_real_calibration=True, source="real")
+    p = CameraDetectorProvider(calibration=cal, replay_path=path,
+                               object_sizes_path=object_sizes)
+    outputs = list(p.stream())
+    assert p.detections_skipped == 1
+    assert len(outputs) == 1
+    assert outputs[0][2] == []
+    assert outputs[0][2] == []  # 无合法检测
+
+
+def test_bare_radius_is_external_claim_in_provider(tmp_path):
+    detections = [{
+        "class_name": "unknown_object", "confidence": 0.9,
+        "bbox": [308, 543, 332, 567], "radius_cm": 150,
+    }]
+    path, object_sizes = _make_replay_for_detections(tmp_path, detections)
+    cal = make_cal(is_real_calibration=True, source="real")
+    p = CameraDetectorProvider(calibration=cal, replay_path=path,
+                               object_sizes_path=object_sizes)
+    outputs = list(p.stream())
+    det = outputs[0][2][0]
+    assert det.size_source == "external_claim"
+    assert det.size_trusted is False
+
+
+def test_local_registry_wins_over_150cm_bucket_in_provider(tmp_path, caplog):
+    detections = [{
+        "class_name": "bucket", "confidence": 0.9,
+        "bbox": [163, 367, 243, 437], "radius_cm": 150,
+    }]
+    path, object_sizes = _make_replay_for_detections(tmp_path, detections)
+    cal = make_cal(is_real_calibration=True, source="real")
+    p = CameraDetectorProvider(calibration=cal, replay_path=path,
+                               object_sizes_path=object_sizes)
+    with caplog.at_level("WARNING"):
+        outputs = list(p.stream())
+    det = outputs[0][2][0]
+    assert det.radius_cm == pytest.approx(15.0)
+    assert det.size_source == "local_registry"
+    assert det.size_trusted is True
+
+
+def test_confirmed_unknown_class_not_size_trusted():
+    wm = WorldModel()
+    for t in (0.0, 0.5, 1.0, 1.5):
+        wm.update([Detection("unknown_object", 0.0, 1.0, 0.9)],
+                  RobotPose(), now=t)
+    obj = wm.get_object("unknown_object")
+    assert obj.state == ObjectState.CONFIRMED
+    assert obj.size_trusted is False
+    assert wm.to_contract(now=1.5) == []
