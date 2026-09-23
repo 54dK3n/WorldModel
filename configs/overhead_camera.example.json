@@ -1,0 +1,18 @@
+{
+  "name": "overhead_camera",
+  "image_width": 640,
+  "image_height": 640,
+  "fx": 500.0,
+  "fy": 500.0,
+  "cx": 320.0,
+  "cy": 320.0,
+  "camera_height_m": 1.5,
+  "pitch_rad": 0.5235987755982988,
+  "camera_x_m": 0.0,
+  "camera_z_m": 0.0,
+  "ground_plane_height_m": 0.0,
+  "min_ground_range_m": 0.15,
+  "max_ground_range_m": 4.0,
+  "source": "test",
+  "is_real_calibration": false
+}

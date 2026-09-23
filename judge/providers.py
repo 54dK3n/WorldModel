@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from world_model.types import TrackedObject
+from world_model.types import COORDINATE_FRAME_WORLD, FrameQuality, TrackedObject
 
 from .evidence import (EvidencePolicy, build_containment_evidence,
                        build_grasp_evidence)
@@ -56,6 +56,10 @@ class JudgeContext:
     container_id: Optional[str] = None
     gripper_pose: Optional[Tuple[float, float]] = None   # 末端 (x, z)，世界系
     policy: Optional[EvidencePolicy] = None
+    calibration_trusted: bool = False
+    frame_quality: Optional[FrameQuality] = None
+    coordinate_frame: str = COORDINATE_FRAME_WORLD
+    gripper_state_known: bool = False
 
 
 # ---------------------------------------------------------------------- 基类
@@ -106,6 +110,10 @@ class WorldModelDiffProvider(JudgeProvider):
                 target_id=ctx.target_id,
                 container_id=ctx.container_id,
                 gripper_closed=req.gripper_closed,
+                calibration_trusted=ctx.calibration_trusted,
+                frame_quality=ctx.frame_quality,
+                coordinate_frame=ctx.coordinate_frame,
+                gripper_state_known=ctx.gripper_state_known,
             )
             return JudgeResponse(
                 success=ev["verdict"]["success"],
@@ -119,6 +127,10 @@ class WorldModelDiffProvider(JudgeProvider):
                 gripper_pose=ctx.gripper_pose,
                 policy=policy,
                 target_id=ctx.target_id,
+                calibration_trusted=ctx.calibration_trusted,
+                frame_quality=ctx.frame_quality,
+                coordinate_frame=ctx.coordinate_frame,
+                gripper_state_known=ctx.gripper_state_known,
             )
             return JudgeResponse(
                 success=ev["verdict"]["success"],

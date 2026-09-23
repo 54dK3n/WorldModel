@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "unit": "cm",
+  "objects": {
+    "ball": {
+      "radius_cm": 3.3,
+      "radius_semantics": "outer_radius",
+      "source": "manual_measurement",
+      "measured_by": "project_team",
+      "reviewed": true
+    },
+    "basket": {
+      "radius_cm": 15.0,
+      "radius_semantics": "inner_radius",
+      "source": "manual_measurement",
+      "measured_by": "project_team",
+      "reviewed": true
+    }
+  },
+  "instances": {}
+}

@@ -11,7 +11,7 @@ from typing import Dict, List
 
 # 规范名 -> 所有可接受的写法（含检测器类名、中文、口语）
 DEFAULT_ALIASES: Dict[str, List[str]] = {
-    "ball": ["sports ball", "tennis ball", "球", "网球", "小球"],
+    "ball": ["sports ball", "tennis ball", "tennis_ball", "球", "网球", "小球"],
     "basket": ["basket", "bucket", "篮子", "桶", "框"],
     "table": ["dining table", "desk", "桌子", "台面"],
     "bottle": ["bottle", "coke_bottle", "瓶子", "可乐瓶"],

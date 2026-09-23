@@ -17,12 +17,17 @@ import math
 from dataclasses import dataclass, field
 from typing import Dict
 
+from .calibration import CameraCalibration
 from .types import ObjectState, RobotPose, TrackedObject
 
 
 @dataclass
 class FovConfig:
-    """相机视野。TODO: 标定后用真实内外参替换。"""
+    """固定角度/距离的相机视野。仅作为未标定时的兜底可见性模型。
+
+    相机投影产生的对象不应继续使用本模型；应传入 CameraCalibration 作为
+    WorldModel(visibility=...) 或 apply_decay(..., fov_or_visibility=cal)。
+    """
 
     horizontal_fov_deg: float = 70.0
     max_range_m: float = 4.0
@@ -63,7 +68,7 @@ def _norm_angle(a: float) -> float:
 
 
 def is_in_fov(x: float, z: float, pose: RobotPose, fov: FovConfig) -> bool:
-    """该坐标当前是否落在相机视野内。纯几何，无模型。"""
+    """固定角度/距离的兜底 FOV 判断。相机投影对象请使用统一可见性模型。"""
     dx, dz = x - pose.x, z - pose.z
     dist = math.hypot(dx, dz)
     if dist > fov.max_range_m or dist < fov.min_range_m:
@@ -71,6 +76,28 @@ def is_in_fov(x: float, z: float, pose: RobotPose, fov: FovConfig) -> bool:
     bearing = math.atan2(dx, dz)              # z 为前向
     rel = abs(_norm_angle(bearing - pose.yaw_rad))
     return rel <= math.radians(fov.horizontal_fov_deg / 2.0)
+
+
+def resolve_visibility(fov_or_visibility) -> object:
+    """把旧 FovConfig 或新 CameraCalibration 统一为可见性模型。
+
+    可见性模型只需要实现 is_visible(x_world, z_world, pose) -> bool。
+    """
+    if isinstance(fov_or_visibility, CameraCalibration):
+        return fov_or_visibility
+    if hasattr(fov_or_visibility, "is_visible"):
+        return fov_or_visibility
+    return FovVisibility(fov_or_visibility if isinstance(fov_or_visibility, FovConfig) else FovConfig())
+
+
+class FovVisibility:
+    """FovConfig 的适配器。"""
+
+    def __init__(self, fov: FovConfig):
+        self.fov = fov
+
+    def is_visible(self, x_world: float, z_world: float, pose: RobotPose) -> bool:
+        return is_in_fov(x_world, z_world, pose, self.fov)
 
 
 def half_life_for(obj: TrackedObject, in_fov: bool, cfg: DecayConfig) -> float:
@@ -82,15 +109,25 @@ def apply_decay(
     obj: TrackedObject,
     now: float,
     pose: RobotPose,
-    fov: FovConfig,
+    fov_or_visibility: object,
     cfg: DecayConfig,
 ) -> TrackedObject:
-    """对一个"这一帧没被匹配上"的对象做衰减。**不删除对象。**"""
+    """对一个"这一帧没被匹配上"的对象做衰减。**不删除对象。**
+
+    fov_or_visibility 可以是 FovConfig（旧接口）或 CameraCalibration。
+    可见性未知时按不在视野内处理，避免把长期保留当默认。
+    """
     dt = max(0.0, now - obj.last_updated)
     if dt == 0.0:
         return obj
 
-    in_fov = is_in_fov(obj.x, obj.z, pose, fov)
+    visibility = resolve_visibility(fov_or_visibility)
+    try:
+        in_fov = bool(visibility.is_visible(obj.x, obj.z, pose))
+    except Exception:
+        # 可见性未知时按“在视野内但没检测到”处理（快衰减），
+        # 不允许以未知为借口长期保留对象。
+        in_fov = True
     if in_fov:
         obj.miss_count += 1   # 只在视野内的漏检才算 miss
 

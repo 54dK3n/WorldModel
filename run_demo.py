@@ -13,7 +13,10 @@ from world_model.providers import MockProvider
 
 
 def main() -> None:
-    provider = MockProvider("scenes/demo_scene.json")
+    provider = MockProvider(
+        "scenes/demo_scene.json",
+        object_sizes_path="configs/object_sizes.example.json",
+    )
     # 场景相对时刻 0.0 对应的 Unix 时间。不给的话导出的 timestamp 会落在 1970 年。
     wm = WorldModel(time_origin=provider.time_origin)
 

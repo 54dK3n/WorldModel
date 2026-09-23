@@ -23,8 +23,14 @@ sys.path.insert(0, ".")
 from judge.evidence import EvidencePolicy, build_grasp_evidence
 from judge.providers import (JudgeContext, JudgeRequest, WorldModelDiffProvider,
                              get_provider)
-from world_model import Detection, RobotPose, WorldModel
-from world_model.types import ObjectState, TrackedObject
+from world_model import Detection, FrameQuality, RobotPose, WorldModel
+from world_model.types import (
+    RADIUS_SEMANTICS_INNER,
+    RADIUS_SEMANTICS_OUTER,
+    SIZE_SOURCE_LOCAL_REGISTRY,
+    ObjectState,
+    TrackedObject,
+)
 
 BAR = "=" * 78
 SUB = "-" * 78
@@ -47,18 +53,31 @@ def verify(cid: str, expected: bool, actual: bool, note: str, known: bool = Fals
 
 def det(cls: str, x: float, z: float, conf: float = 0.9, r: float = 3.3,
         frame: str = "probe", bbox=(0, 0, 10, 10)) -> Detection:
-    return Detection(class_name=cls, x=x, z=z, confidence=conf, radius_cm=r,
-                     bbox=bbox, frame_id=frame, source="probe")
+    semantics = RADIUS_SEMANTICS_INNER if cls == "basket" else RADIUS_SEMANTICS_OUTER
+    canonical = "basket" if cls == "basket" else "ball"
+    return Detection(
+        class_name=cls, x=x, z=z, confidence=conf, radius_cm=r,
+        size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True,
+        radius_semantics=semantics, canonical_name=canonical,
+        bbox=bbox, frame_id=frame, source="probe",
+        frame_quality=FrameQuality(frame_id=frame, degraded=False,
+                                   calibration_trusted=True),
+    )
 
 
 def obj(name: str, x: float, z: float, conf: float, r: float = 3.3,
         last_seen: float = 0.0, state: ObjectState = ObjectState.CONFIRMED,
         oid: Optional[str] = None, unc: float = 1.0) -> TrackedObject:
+    semantics = RADIUS_SEMANTICS_INNER if name == "basket" else RADIUS_SEMANTICS_OUTER
     return TrackedObject(
         obj_id=oid or f"{name}_900", name=name, x=x, z=z, radius_cm=r,
+        size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True,
+        radius_semantics=semantics,
         confidence=conf, first_seen=0.0, last_seen=last_seen, last_updated=last_seen,
         hit_count=5, state=state, pose_uncertainty_cm=unc,
         source="probe", last_bbox=(0, 0, 10, 10), last_frame_id="probe",
+        last_frame_quality=FrameQuality(frame_id="probe", degraded=False,
+                                        calibration_trusted=True),
     )
 
 
@@ -67,6 +86,16 @@ def show(objs: Sequence[TrackedObject], now: float, label: str = "快照") -> No
     for o in objs:
         print(f"    {o.obj_id:<12} name={o.name:<7} conf={o.confidence:.3f} "
               f"state={o.state.value:<9} pos=({o.x:+.3f},{o.z:+.3f}) age={o.age(now):+.1f}s")
+
+
+def trusted_ctx(**kwargs) -> JudgeContext:
+    """显式构造完整可信证据。探针不自动覆盖任何红灯。"""
+    ctx = JudgeContext(**kwargs)
+    ctx.calibration_trusted = True
+    ctx.frame_quality = FrameQuality(frame_id="probe", degraded=False,
+                                     calibration_trusted=True)
+    ctx.gripper_state_known = kwargs.get("gripper_state_known", True)
+    return ctx
 
 
 def judge_put(before, after, now, target="ball", container="basket",
@@ -112,7 +141,7 @@ def case_a_identity():
     before, after, tid, now = build_scene()
     show(before, 1.0, "before")
     show(after, now, "after ")
-    resp = judge_put(before, after, now, ctx=JudgeContext(target_id=tid))
+    resp = judge_put(before, after, now, ctx=trusted_ctx(target_id=tid))
     brief(resp)
     ids = {o.obj_id for o in after if o.name == "ball"}
     print(f"\n  after 里的 ball 轨迹：{ids}")
@@ -127,7 +156,7 @@ def case_b_verdict_stable():
     outs = []
     for conf in (0.88, 0.55, 0.35):
         before, after, tid, now = build_scene(new_conf=conf)
-        resp = judge_put(before, after, now, ctx=JudgeContext(target_id=tid))
+        resp = judge_put(before, after, now, ctx=trusted_ctx(target_id=tid))
         n_balls = len([o for o in after if o.name == "ball"])
         print(f"\n{SUB}\n  新检测 conf={conf}（球都在桶里，物理事实不变）")
         print(f"  ball 轨迹数={n_balls} | success={resp.success}")
@@ -159,11 +188,11 @@ def case_c_distractor():
     show(after, 1.5, "after")
 
     print(f"\n{SUB}\n  a) 调用方锁定了目标 id（target_id={tid}）:")
-    r1 = judge_put(before, after, 1.5, ctx=JudgeContext(target_id=tid))
+    r1 = judge_put(before, after, 1.5, ctx=trusted_ctx(target_id=tid))
     brief(r1)
 
     print(f"\n{SUB}\n  b) 调用方只给名字 'ball'，场景里有两个:")
-    r2 = judge_put(before, after, 1.5)
+    r2 = judge_put(before, after, 1.5, ctx=trusted_ctx())
     brief(r2)
 
     print("\n  a) 主语明确 -> 按目标球判，它没动 -> 判失败（正确）")
@@ -177,7 +206,7 @@ def case_d_state_change():
     snap = [obj("ball", -0.60, 1.60, 0.90, 3.3, last_seen=5.0),
             obj("basket", -0.60, 1.60, 0.92, 15.0, last_seen=5.0, oid="basket_901")]
     before, after = copy.deepcopy(snap), copy.deepcopy(snap)
-    resp = judge_put(before, after, 5.0, ctx=JudgeContext(target_id="ball_900"))
+    resp = judge_put(before, after, 5.0, ctx=trusted_ctx(target_id="ball_900"))
     brief(resp)
     print("\n  球在动作前就在桶里，本次动作什么也没发生。")
     print("  relation.satisfied 仍为 True（几何确实成立），但 before_satisfied 也是 True，")
@@ -194,11 +223,11 @@ def case_e_clock():
               obj("basket", -0.60, 1.60, 0.92, 15.0, last_seen=100.0, oid="basket_901")]
 
     print(f"\n{SUB}\n  a) 正确传 now=100.5（证据新鲜）:")
-    r1 = judge_put(before, after, 100.5, ctx=JudgeContext(target_id="ball_900"))
+    r1 = judge_put(before, after, 100.5, ctx=trusted_ctx(target_id="ball_900"))
     brief(r1)
 
     print(f"\n{SUB}\n  b) 正确传 now=130.0（证据已 30 秒未刷新）:")
-    r2 = judge_put(before, after, 130.0, ctx=JudgeContext(target_id="ball_900"))
+    r2 = judge_put(before, after, 130.0, ctx=trusted_ctx(target_id="ball_900"))
     brief(r2)
 
     print(f"\n{SUB}\n  c) 调用方漏传 now（JudgeRequest.now 默认 0.0）:")
@@ -217,20 +246,29 @@ def case_f_grasp():
     case("F", "抓取双条件：夹爪反馈 + 视觉确认")
     print(f"\n{SUB}\n  a) 夹爪空抓，球在 3 米外地上还能看见:")
     a1 = [obj("ball", 1.50, 3.00, 0.90, 3.3, last_seen=10.0)]
-    e1 = build_grasp_evidence(a1, "ball", True, 10.0, gripper_pose=(0.20, 0.60))
+    e1 = build_grasp_evidence(a1, "ball", True, 10.0, gripper_pose=(0.20, 0.60),
+                               calibration_trusted=True,
+                               frame_quality=FrameQuality(frame_id="probe", degraded=False,
+                                                          calibration_trusted=True))
     print(f"  visual_confirmed={e1['visual_confirmed']} reach={e1['reach_cm']}cm "
           f"(limit {e1['reach_limit_cm']}cm) satisfied={e1['satisfied']}")
     print(f"  reasons={e1['verdict']['reasons']}")
 
     print(f"\n{SUB}\n  b) 真抓住了，球被夹爪自遮挡 1.2s:")
     a2 = [obj("ball", 0.21, 0.61, 0.90, 3.3, last_seen=8.8)]
-    e2 = build_grasp_evidence(a2, "ball", True, 10.0, gripper_pose=(0.20, 0.60))
+    e2 = build_grasp_evidence(a2, "ball", True, 10.0, gripper_pose=(0.20, 0.60),
+                               calibration_trusted=True,
+                               frame_quality=FrameQuality(frame_id="probe", degraded=False,
+                                                          calibration_trusted=True))
     print(f"  visual_confirmed={e2['visual_confirmed']} reach={e2['reach_cm']}cm "
           f"staleness={e2['staleness_s']}s satisfied={e2['satisfied']}")
     print(f"  reasons={e2['verdict']['reasons']}")
 
     print(f"\n{SUB}\n  c) 没有夹爪位姿可用（外壳没提供）:")
-    e3 = build_grasp_evidence(a2, "ball", True, 10.0, gripper_pose=None)
+    e3 = build_grasp_evidence(a2, "ball", True, 10.0, gripper_pose=None,
+                               calibration_trusted=True,
+                               frame_quality=FrameQuality(frame_id="probe", degraded=False,
+                                                          calibration_trusted=True))
     print(f"  satisfied={e3['satisfied']} reasons={e3['verdict']['reasons']}")
 
     print("\n  a) 视觉那条现在要求目标在夹爪够得着的地方 -> out_of_reach，不再空抓报成功")
@@ -256,7 +294,7 @@ def case_g_false_detection():
                det("basket", -0.60, 1.60, 0.92, 15.0)], pose, now=1.5)
     after = wm.snapshot()
     show(after, 1.5, "after")
-    resp = judge_put(before, after, 1.5, ctx=JudgeContext(target_id=tid))
+    resp = judge_put(before, after, 1.5, ctx=trusted_ctx(target_id=tid))
     brief(resp)
     print("\n  判定主语由 before 锁定 -> 看的是桌上那个球，它没动 -> 失败。")
     print("  即使调用方不给 id，误检轨迹是 TENTATIVE（hit_count=1 < confirm_hits=3），")
@@ -272,18 +310,18 @@ def case_g_false_detection():
 def case_h_geometry():
     case("H", "几何：2D 投影判据的能力边界")
     cases = [
-        ("球被夹爪举在桶正上方 30cm，夹爪仍闭合", 0.00, 1.50, True),
-        ("球被举在桶上方，但外壳没报夹爪状态", 0.00, 1.50, False),
-        ("球架在桶沿上，球心距桶心 14.9cm", 0.149, 1.50, False),
+        ("球被夹爪举在桶正上方 30cm，夹爪仍闭合", 0.00, 1.50, True, True),
+        ("球被举在桶上方，但外壳没报夹爪状态", 0.00, 1.50, False, False),
+        ("球架在桶沿上，球心距桶心 14.9cm", 0.149, 1.50, False, True),
     ]
     outs = []
-    for label, x, z, grip in cases:
+    for label, x, z, grip, grip_known in cases:
         after = [obj("ball", x, z, 0.90, 3.3, last_seen=5.0, unc=0.2),
                  obj("basket", 0.00, 1.50, 0.92, 15.0, last_seen=5.0, oid="basket_901", unc=0.2)]
         before = [obj("ball", 1.00, 1.00, 0.90, 3.3, last_seen=5.0, unc=0.2),
                   obj("basket", 0.00, 1.50, 0.92, 15.0, last_seen=5.0, oid="basket_901", unc=0.2)]
-        resp = judge_put(before, after, 5.0, ctx=JudgeContext(target_id="ball_900"),
-                         gripper_closed=grip)
+        ctx = trusted_ctx(target_id="ball_900", gripper_state_known=grip_known)
+        resp = judge_put(before, after, 5.0, ctx=ctx, gripper_closed=grip)
         print(f"\n{SUB}\n  {label}")
         print(f"  success={resp.success} relation={resp.evidence['relation']}")
         print(f"  reasons={resp.evidence['verdict']['reasons']}")
@@ -296,7 +334,7 @@ def case_h_geometry():
     print("  每条 containment 判定都带 no_height_evidence 提示，等契约决策。")
     verify("H", False, outs[0], "夹爪闭合时不再把『举在桶上方』判成放入成功")
     verify("H2", False, outs[2], "架在桶沿的球几何上不成立")
-    verify("H3", False, outs[1], "缺夹爪状态时仍无法区分上方/里面", known=True)
+    verify("H3", False, outs[1], "缺夹爪状态时失败关闭：missing_gripper_state")
 
 
 # ==================================================================== I
@@ -306,7 +344,7 @@ def case_i_confidence_floor():
              obj("basket", -0.60, 1.60, 0.92, 15.0, last_seen=5.0, oid="basket_901")]
     before = [obj("ball", 0.30, 1.00, 0.90, 3.3, last_seen=5.0),
               obj("basket", -0.60, 1.60, 0.92, 15.0, last_seen=5.0, oid="basket_901")]
-    resp = judge_put(before, after, 5.0, ctx=JudgeContext(target_id="ball_900"))
+    resp = judge_put(before, after, 5.0, ctx=trusted_ctx(target_id="ball_900"))
     brief(resp)
     print("\n  conf=0.16（lost 阈值 0.15），state=STALE。")
     print("  两条判定路径现在共用 check_quality：低于 min_confidence 或未 CONFIRMED 一律不认。")
@@ -320,7 +358,7 @@ def case_j_single_truth():
              obj("basket", -0.60, 1.60, 0.92, 15.0, last_seen=0.0, oid="basket_901")]
     before = [obj("ball", 0.30, 1.00, 0.90, 3.3, last_seen=0.0),
               obj("basket", -0.60, 1.60, 0.92, 15.0, last_seen=0.0, oid="basket_901")]
-    resp = judge_put(before, after, 5.0, ctx=JudgeContext(target_id="ball_900"))
+    resp = judge_put(before, after, 5.0, ctx=trusted_ctx(target_id="ball_900"))
     brief(resp)
     ev = resp.evidence
     print(f"\n  几何 relation.satisfied = {ev['relation']['satisfied']}（只表示距离成立）")

@@ -218,3 +218,15 @@ D. `scene_observations` 能否加 `id` 与 `state`？下游现在无法区分实
    不传时判定会保守失败并给出原因码，不会假装确认。
 4. **`confidence` 是启发式分数不是概率** —— 融合公式带下限保护，所有基于它的阈值都是经验值，
    真机标定后要重新定。evidence 里以 `heuristic_confidence` 提示。
+
+
+---
+
+## 尺寸信任边界（2026-08 严格化）
+
+- 相机/YOLO/公开数据集/回放文件不得声明 `size_trusted`，外部 `radius_cm` 只作为不可信 `external_claim`。
+- 唯一可信尺寸来源：`configs/object_sizes.example.json`（人工测量/规格/规则/已审核实例配置）。
+- 查询顺序：`AliasTable.canonical` -> `ObjectSizeRegistry`。
+- `CONFIRMED` 仅确认存在，不等于尺寸可信。
+- 球为 `outer_radius`，容器为 `inner_radius`；containment 阈值 = 容器内半径 - 目标外半径。
+- Judge 严格模式：对象自身的 `last_frame_quality` 与尺寸证据必须可信，外部 Context 只能增加限制，不能覆盖对象红灯。

@@ -9,7 +9,11 @@ import math
 
 import pytest
 
-from world_model import Detection, RobotPose, WorldModel
+from world_model import Detection, FrameQuality, RobotPose, WorldModel
+from world_model.types import (
+    RADIUS_SEMANTICS_OUTER,
+    SIZE_SOURCE_LOCAL_REGISTRY,
+)
 from world_model.aliases import AliasTable
 from world_model.association import AssociationConfig, associate
 from world_model.decay import FovConfig, is_in_fov
@@ -17,7 +21,14 @@ from world_model.types import ObjectState
 
 
 def det(cls="sports ball", x=0.0, z=1.0, conf=0.95):
-    return Detection(class_name=cls, x=x, z=z, confidence=conf, radius_cm=3.3)
+    return Detection(
+        class_name=cls, x=x, z=z, confidence=conf, radius_cm=3.3,
+        size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True,
+        radius_semantics=RADIUS_SEMANTICS_OUTER,
+        canonical_name="ball",
+        frame_quality=FrameQuality(frame_id="f", degraded=False,
+                                   calibration_trusted=True),
+    )
 
 
 # ------------------------------------------------------------------ 场景 1
@@ -165,8 +176,11 @@ def test_scene_observations_schema():
 def test_timestamp_uses_time_origin():
     """内部时间是场景相对秒，直接当 Unix 纪元格式化会导出 1970 年。"""
     wm = WorldModel(time_origin=1786417200.0)     # 2026-08-11T03:00:00Z
-    wm.update([det(x=0.1, z=1.2)], RobotPose(), now=9.0)
-    assert wm.to_contract()[0]["timestamp"] == "2026-08-11T03:00:09Z"
+    for t in (8.0, 8.5, 9.0):
+        wm.update([det(x=0.1, z=1.2)], RobotPose(), now=t)
+    obs = wm.to_contract(now=9.0)
+    assert len(obs) == 1
+    assert obs[0]["timestamp"] == "2026-08-11T03:00:09Z"
 
 
 # ------------------------------------------------------------ 门控随 dt 自适应

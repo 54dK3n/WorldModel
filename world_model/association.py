@@ -3,9 +3,13 @@
 本质是**指派问题**，不是置信区间问题。
 当前 N 个已知对象，这一帧 M 个检测，要决定谁配谁：
 
-    构造 N×M 代价矩阵：代价 = 归一化距离 + 类别不一致罚项 (+ 外观相似度，暂不上)
+    构造 N×M 代价矩阵：代价 = 绝对距离 + 类别不一致罚项 (+ 外观相似度，暂不上)
     门控：距离超阈值直接判为不可配（inf）
     求解：贪心（物体少、移动慢，SORT 级别足够；需要时可换匈牙利算法）
+
+    注意：门控只决定“能不能配”，不参与代价缩放。若用 dist/gate 当代价，
+    很久没更新的轨迹 gate 更大，反而更容易抢走刚更新轨迹旁边的检测，
+    造成同类多物体互相顶替。
 
     配不上的新检测 -> 新建对象
     配不上的老对象 -> 交给 decay.py 走衰减
@@ -91,7 +95,7 @@ def build_cost_matrix(
                 row.append(INF)
                 continue
 
-            cost = dist / max(gate, 1e-6)
+            cost = dist
             if not same:
                 cost += cfg.class_mismatch_penalty
             if appearance_fn is not None and cfg.appearance_weight > 0:
