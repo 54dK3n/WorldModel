@@ -7,8 +7,9 @@
 坐标约定（统一为世界坐标）：
   Detection.x/z 和 TrackedObject.x/z 都是世界坐标（米）。
   机器人本体/相机局部坐标只存在于 provider 内部，进入 WorldModel 前必须完成
-  RobotPose.to_world() 转换。yaw 旋转方向：yaw=+pi/2 表示机器人左转 90 度，
-  即世界朝向从 +z 转向 +x。
+  RobotPose.to_world() 转换。yaw 旋转方向：yaw_rad 正方向为右转，即从 +z 转向 +x。
+  平台 GuangyangProvider 的 headingDeg 左转为正，因此那里只有一处转换
+  yaw_rad = -radians(heading_deg)。
 
 对外契约（scene_observations）由 adapters.py 从 TrackedObject 导出，
 内部结构与对外契约解耦，契约变动只改 adapter。
@@ -91,7 +92,7 @@ class RobotPose:
     def to_world(self, x_local: float, z_local: float) -> Tuple[float, float]:
         """机器人局部坐标 -> 世界坐标。
 
-        yaw 旋转方向：yaw=+pi/2 表示机器人从 +z 轴左转到 +x 轴。
+        yaw_rad 正方向为右转，即从 +z 轴转向 +x 轴。
         """
         cos = math.cos(self.yaw_rad)
         sin = math.sin(self.yaw_rad)

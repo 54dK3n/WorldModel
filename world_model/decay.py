@@ -29,8 +29,8 @@ class FovConfig:
     WorldModel(visibility=...) 或 apply_decay(..., fov_or_visibility=cal)。
     """
 
-    horizontal_fov_deg: float = 70.0
-    max_range_m: float = 4.0
+    horizontal_fov_deg: float = 75.2
+    max_range_m: float = 8.0
     min_range_m: float = 0.15
 
 
@@ -51,6 +51,11 @@ class DecayConfig:
             "table": 8.0,
             "ball": 1.0,       # 会滚，衰减最快
             "bottle": 2.0,
+            "target": 1.0,
+            "distractor": 1.5,
+            "obstacle": 8.0,
+            "storage-zone": 8.0,
+            "cleanup-zone": 8.0,
         }
     )
 
