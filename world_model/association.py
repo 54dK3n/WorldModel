@@ -46,6 +46,12 @@ class AssociationConfig:
     class_mismatch_penalty: float = 1.0
     allow_cross_class: bool = False   # False = 类别不一致直接门控掉
     appearance_weight: float = 0.0    # 预留 ReID 权重，本期为 0
+    # 静态目标（抓取前不动）：关联上的命中按等权平均更新位置，而不是按 dt 的指数滤波。
+    # 指数滤波在 dt≈4–5s 时权重≈0.9998，等于只用最后一次命中。默认关闭，只由静态场景配置打开。
+    static_equal_weight: bool = False
+    # 静态目标：同一轨迹上，车体位姿与已有命中位姿相距 < 该值（米）的观测视为同一位置的重复观测：
+    # 不增加命中数、不参与位置平均（只刷新 last_seen）。0 = 关闭（默认）。
+    min_hit_pose_gap_m: float = 0.0
 
 
 def gate_for(track: TrackedObject, now: Optional[float], cfg: AssociationConfig) -> float:
