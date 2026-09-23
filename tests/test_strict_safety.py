@@ -172,9 +172,7 @@ def test_single_frame_false_detection_decays_away_without_ambiguity():
         wm.update([Detection("basket", -0.5, 1.6, 0.92, radius_cm=15.0,
                              size_source=SIZE_SOURCE_LOCAL_REGISTRY, size_trusted=True)],
                   pose, now=t)
-    archived = wm.get_object("ball")
-    assert archived is None or archived.state == ObjectState.LOST, "单帧误检不得长期作为活跃对象残留"
-    assert all(o.name != "ball" for o in wm.snapshot()), "单帧误检不得留在活跃快照"
+    assert wm.get_object("ball") is None, "单帧误检不得长期作为同名对象残留"
 
 
 # ------------------------------------------------------------------ FOV 与量程

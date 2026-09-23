@@ -13,12 +13,14 @@ python3 run_camera_replay.py \
     --calibration configs/overhead_camera.example.json \
     --object-sizes configs/object_sizes.example.json \
     --log-file logs/camera_replay.log
-python3 -m pytest tests/ -q          # 130 passed
+python3 -m pytest tests/ -q          # 168 passed
 python3 tools/false_verdict_probe.py # 判定可靠性探针：16 PASS / 0 FAIL / 1 已知边界
 ```
 
 零外部依赖（仅 pytest 用于测试）。外部 YOLO 检测接入与离线回放说明见
 **[docs/CAMERA_REPLAY.md](docs/CAMERA_REPLAY.md)**。
+广阳岛需显式选择完整静态配置，见
+**[docs/GUANGYANG_PROFILE.md](docs/GUANGYANG_PROFILE.md)**；通用默认保持不变。
 
 ## 目录
 

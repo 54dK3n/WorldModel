@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 from ..association import AssociationConfig
+from ..core import WorldModel
+from ..decay import DecayConfig, FovConfig
 from ..types import (
     COORDINATE_FRAME_WORLD,
     RADIUS_SEMANTICS_OUTER,
@@ -92,6 +94,33 @@ def guangyang_static_association_config() -> AssociationConfig:
         appearance_weight=GUANGYANG_STATIC_ASSOCIATION_CONFIG.appearance_weight,
         static_equal_weight=GUANGYANG_STATIC_ASSOCIATION_CONFIG.static_equal_weight,
         min_hit_pose_gap_m=GUANGYANG_STATIC_ASSOCIATION_CONFIG.min_hit_pose_gap_m,
+    )
+
+
+def guangyang_static_world_model(*, max_range_m: float = 8.0) -> WorldModel:
+    """构造完整、显式的广阳岛静态场景模型。
+
+    保留原广阳岛集成的视野、类别衰减、等权融合、15 cm 命中位姿去重，
+    以及 LOST 查询后备。仅数据转换器 GuangyangProvider 不会启用本配置。
+    确认采样程序可传 ``max_range_m=0.9``，与其合法测距窗口保持一致。
+    每次调用均构造独立配置，不改变 WorldModel/FovConfig/DecayConfig 默认值。
+    """
+    return WorldModel(
+        assoc_cfg=guangyang_static_association_config(),
+        decay_cfg=DecayConfig(class_half_life_scale={
+            "basket": 4.0,
+            "table": 8.0,
+            "ball": 1.0,
+            "bottle": 2.0,
+            "target": 1.0,
+            "distractor": 1.5,
+            "obstacle": 8.0,
+            "storage-zone": 8.0,
+            "cleanup-zone": 8.0,
+        }),
+        fov_cfg=FovConfig(horizontal_fov_deg=75.2, max_range_m=max_range_m,
+                          min_range_m=0.15),
+        include_lost_in_get_object=True,
     )
 
 
@@ -531,6 +560,7 @@ __all__ = [
     "GUANGYANG_MIN_SAME_CLASS_GAP_M",
     "GUANGYANG_STATIC_ASSOCIATION_CONFIG",
     "guangyang_static_association_config",
+    "guangyang_static_world_model",
     "warn_if_gate_exceeds_half_min_gap",
     "GuangyangArtifactEntry",
     "GuangyangArtifactFilter",

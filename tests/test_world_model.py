@@ -105,10 +105,7 @@ def test_object_becomes_lost_and_leaves_snapshot():
     wm = WorldModel()
     wm.update([det(x=0.0, z=1.5)], RobotPose(), now=0.0)
     wm.update([], RobotPose(), now=20.0)   # 视野内长时间漏检
-    archived = wm.get_object("ball")
-    assert archived is not None, "LOST 对象应归档而非物理销毁，get_object 仍可取回"
-    assert archived.state == ObjectState.LOST
-    assert wm.snapshot() == [], "LOST 轨迹不得继续出现在活跃快照中"
+    assert wm.get_object("ball") is None
     assert "ball_001" in wm._lost, "LOST 对象应归档而非物理销毁"
 
 

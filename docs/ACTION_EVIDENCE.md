@@ -12,7 +12,9 @@
 - 时间必须是与观测相同时间轴的有限数；非有限值抛 `ValueError`，零副作用。
   调用方应提供当前动作验证时刻，不得回填早于已有证据的时刻。
 - 已知轨迹返回 `True`：`confidence=0`、`state=LOST`，通过现有归档机制退出
-  `get_scene()` / `snapshot()` / `to_contract()`；`get_object(exact_id)` 仍可查。
+  `get_scene()` / `snapshot()` / `to_contract()`；显式 `get_archived(exact_id)` 或
+  `get_object(exact_id, include_lost=True)` 仍可查。通用模型的默认查询不返回
+  LOST；`guangyang_static_world_model()` 显式启用旧广阳岛的归档查询后备。
 - 保留坐标、尺寸、`first_seen`、`last_seen`、命中次数、帧信息和命中位姿历史。
   第一次撤销只更新该对象 `last_updated` 和全局最新写入时刻；其它对象不变。
 - 重复撤销已为 `LOST/confidence=0` 的 ID 仍返回 `True`，包括时间在内均不再改写。

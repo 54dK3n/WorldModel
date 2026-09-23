@@ -44,6 +44,7 @@ class WorldModel:
         position_smoothing: float = 0.6,   # 名义帧间隔下的新观测权重，1.0 = 完全信新观测
         nominal_dt_s: float = 0.5,         # position_smoothing 对应的名义帧间隔
         time_origin: Optional[float] = None,  # 内部时刻 0.0 对应的 Unix 时间；None 表示相对时间
+        include_lost_in_get_object: bool = False,  # 显式场景配置可选择归档查询后备
     ):
         self.aliases = aliases or AliasTable()
         self.assoc_cfg = assoc_cfg or AssociationConfig()
@@ -53,6 +54,7 @@ class WorldModel:
         self.position_smoothing = position_smoothing
         self.nominal_dt_s = nominal_dt_s
         self.time_origin = time_origin
+        self.include_lost_in_get_object = include_lost_in_get_object
 
         self._objects: Dict[str, TrackedObject] = {}
         self._lost: Dict[str, TrackedObject] = {}
@@ -236,22 +238,33 @@ class WorldModel:
     def get_scene(self, min_confidence: float = 0.0) -> List[TrackedObject]:
         return [o for o in self._objects.values() if o.confidence >= min_confidence]
 
-    def get_object(self, name_or_id: str) -> Optional[TrackedObject]:
-        """按 obj_id 精确查，或按规范名/别名查置信度最高的一个。
+    def get_object(
+        self, name_or_id: str, *, include_lost: Optional[bool] = None,
+    ) -> Optional[TrackedObject]:
+        """按精确 ID 或规范名/别名查询；通用模型默认只返回活跃对象。
 
-        LOST 轨迹已移出 snapshot()/get_scene()，但仍保留在 _lost 中；
-        这里必须把 _lost 作为查询后备，保证记录不被物理删除。
+        ``include_lost=True`` 显式启用归档后备，False 强制只查活跃表；
+        None 使用模型构造时的选项。广阳岛静态工厂显式启用归档后备，
+        供编排层识别已失效的锁定轨迹。此选项不改变快照或归档行为。
         """
+        if include_lost is None:
+            include_lost = self.include_lost_in_get_object
         if name_or_id in self._objects:
             return self._objects[name_or_id]
-        if name_or_id in self._lost:
+        if include_lost and name_or_id in self._lost:
             return self._lost[name_or_id]
         canonical = self.aliases.canonical(name_or_id)
         active = [o for o in self._objects.values() if o.name == canonical]
         if active:
             return max(active, key=lambda o: o.confidence)
-        archived = [o for o in self._lost.values() if o.name == canonical]
-        return max(archived, key=lambda o: o.confidence) if archived else None
+        if include_lost:
+            archived = [o for o in self._lost.values() if o.name == canonical]
+            return max(archived, key=lambda o: o.confidence) if archived else None
+        return None
+
+    def get_archived(self, obj_id: str) -> Optional[TrackedObject]:
+        """按精确 ID 读取归档；不解析类别/别名，不返回活跃对象。"""
+        return self._lost.get(obj_id)
 
     def snapshot(self) -> List[TrackedObject]:
         """深拷贝，给 Judge 做动作前后差分。"""

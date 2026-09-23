@@ -34,7 +34,7 @@ def test_verified_removal_archives_without_changing_observation_history():
 
     assert wm.mark_removed(selected_id, now=3.0) is True
 
-    archived = wm.get_object(selected_id)
+    archived = wm.get_archived(selected_id)
     assert archived.state == ObjectState.LOST
     assert archived.confidence == 0.0
     assert archived.last_updated == wm.last_update_time == 3.0
@@ -82,14 +82,14 @@ def test_nonfinite_action_time_fails_without_mutating_any_track(now):
 def test_later_observation_does_not_revive_removed_identity():
     wm, selected_id, _ = confirmed_pair()
     wm.mark_removed(selected_id, now=3.0)
-    archived_before = copy.deepcopy(wm.get_object(selected_id).__dict__)
+    archived_before = copy.deepcopy(wm.get_archived(selected_id).__dict__)
     wm.update([Detection(class_name="target", x=0.1, z=1.2, confidence=0.9)],
               RobotPose(x=0.6), now=4.0)
     new_track = min(wm.get_scene(), key=lambda obj: obj.x)
     assert new_track.obj_id != selected_id
     assert new_track.hit_count == 1
     assert new_track.state == ObjectState.TENTATIVE
-    assert wm.get_object(selected_id).__dict__ == archived_before
+    assert wm.get_archived(selected_id).__dict__ == archived_before
 
 
 def test_action_evidence_can_zero_an_already_decayed_archive():
@@ -124,4 +124,4 @@ def test_public_holding_evidence_caller_boundary(holding, expected):
     # WM has no robot/truth dependency and must not manufacture action evidence.
     if holding == "目标物":
         wm.mark_removed(selected_id, now=3.0)
-    assert (wm.get_object(selected_id).state == ObjectState.LOST) is expected
+    assert (wm.get_object(selected_id, include_lost=True).state == ObjectState.LOST) is expected

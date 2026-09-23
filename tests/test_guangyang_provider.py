@@ -11,24 +11,25 @@ import pytest
 
 from world_model import WorldModel
 from world_model.adapters import to_scene_observations
-from world_model.decay import DecayConfig, FovConfig
+from world_model.decay import DecayConfig
 from world_model.providers.guangyang import (
     GuangyangNoiseConfig,
     GuangyangProvider,
+    guangyang_static_world_model,
     observation_to_detection,
     odometry_to_pose,
 )
 from world_model.types import ObjectState, RobotPose
 
 
-def test_fov_defaults_match_guangyang_camera():
-    fov = FovConfig()
+def test_explicit_profile_fov_matches_guangyang_camera():
+    fov = guangyang_static_world_model().fov_cfg
     assert fov.horizontal_fov_deg == pytest.approx(75.2)
     assert fov.max_range_m == pytest.approx(8.0)
 
 
 def test_decay_has_guangyang_class_scales():
-    scales = DecayConfig().class_half_life_scale
+    scales = guangyang_static_world_model().decay_cfg.class_half_life_scale
     assert scales["target"] == pytest.approx(1.0)
     assert scales["distractor"] == pytest.approx(1.5)
     assert scales["obstacle"] == pytest.approx(8.0)
