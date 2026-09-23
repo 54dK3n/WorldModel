@@ -1,6 +1,7 @@
 """World Model 主体。
 
     update(detections, pose, now)  写入：关联 -> 融合 -> 衰减 -> 建/删
+    mark_removed(obj_id, now)     写入：已验证动作证据撤销原位置，归档而不删除
     get_scene()                    只读查询：当前场景快照
     get_object(name)               只读查询：单个对象
     snapshot()                     深拷贝快照，给 Judge 做前后差分
@@ -62,6 +63,35 @@ class WorldModel:
         self.last_update_time: Optional[float] = None
 
     # ------------------------------------------------------------------ 写入
+
+    def mark_removed(self, obj_id: str, now: float) -> bool:
+        """Archive an exact track after the caller verifies physical removal.
+
+        This is action evidence, not a missed detection or a decay update.
+        The caller must first verify the selected target is held using its
+        public action interface. Names/aliases are deliberately not resolved.
+        ``now`` uses the same clock as observations and must be finite.
+
+        Return True for a known ID, including an already removed track;
+        return False for an unknown ID. Repeated removal has no side effects.
+        Geometry and all observation history are preserved in the archive.
+        """
+        if not math.isfinite(now):
+            raise ValueError("removal evidence time must be finite")
+        obj = self._objects.get(obj_id)
+        if obj is None:
+            obj = self._lost.get(obj_id)
+        if obj is None:
+            return False
+        if obj.state == ObjectState.LOST and obj.confidence == 0.0:
+            return True
+        obj.confidence = 0.0
+        obj.state = ObjectState.LOST
+        obj.last_updated = now
+        self.last_update_time = (now if self.last_update_time is None
+                                 else max(self.last_update_time, now))
+        self._archive_lost()
+        return True
 
     def update(
         self,
